@@ -38,9 +38,6 @@ function set_specimen_vars()
   MANUAL_DIR=$ROOT/manual/$id
   HIRES_TO_MOLD_AFFINE=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_to_mold_affine.mat
 
-  # Rotation of the holder around z axis to have the right orientation for viewingw
-  MOLD_REORIENT_VIZ=$MANUAL_DIR/${id}_mold_viz.mat
-
   # The mask for the high-resolution MRI
   HIRES_MRI_REGMASK=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_mask.nii.gz
 
@@ -57,8 +54,12 @@ function set_specimen_vars()
   RESLICE_MOLD_TO_HIRES=$MRI_WORK_DIR/${id}_mri_mold_reslice_to_hires.nii.gz
 
   # Workspaces for mold-blockface preregistration
+  MOLD_WORKSPACE_DIR=$MANUAL_DIR/bf_to_mold
   MOLD_WORKSPACE_SRC=$MANUAL_DIR/bf_to_mold/${id}_mri_bf_to_mold_input.itksnap
   MOLD_WORKSPACE_RES=$MANUAL_DIR/bf_to_mold/${id}_mri_bf_to_mold_result.itksnap
+
+  # Rotation of the holder around z axis to have the right orientation for viewingw
+  MOLD_REORIENT_VIZ=$MRI_WORK_DIR/${id}_mold_viz.mat
 }
 
 # Set common variables for a block
@@ -79,17 +80,21 @@ function set_block_vars()
 
   # Blockface registration stuff
   BF_REG_DIR=$ROOT/work/$id/bfreg/$block
-  BF_TOMOLD_INIT=$BF_REG_DIR/${id}_${block}_blockface_tomold_init.nii.gz
-  BF_TOMOLD_INIT_INVGREEN=$BF_REG_DIR/${id}_${block}_blockface_tomold_init_invgreen.nii.gz
+
+  # Manually generated transform taking block to mold space
+  BF_TOMOLD_MANUAL_RIGID=$BF_REG_DIR/${id}_${block}_blockface_tomold_manual_rigid.mat
+
+  # MRI-like image extracted from blockface
+  BF_MRILIKE=$BF_REG_DIR/${id}_${block}_blockface_mrilike.nii.gz
 
   # MRI crudely mapped to block space
   MRI_TO_BF_INIT=$BF_REG_DIR/${id}_${block}_mri_toblock_init.nii.gz
   MRI_TO_BF_INIT_MASK=$BF_REG_DIR/${id}_${block}_mri_toblock_init_mask.nii.gz
 
   # Matrix to initialize rigid
-  BF_TO_MRI_RIGID_INIT=$BF_REG_DIR/${id}_${block}_rigid_init.mat
-  BF_TO_MRI_RIGID_INVGREEN=$BF_REG_DIR/${id}_${block}_rigid_invgreen.mat
-  BF_TO_MRI_AFFINE_INVGREEN=$BF_REG_DIR/${id}_${block}_affine_invgreen.mat
+  BF_TO_MRI_RIGID=$BF_REG_DIR/${id}_${block}_rigid_invgreen.mat
+  BF_TO_MRI_AFFINE=$BF_REG_DIR/${id}_${block}_affine_invgreen.mat
+  BF_TO_MRI_WORKSPACE=$BF_REG_DIR/${id}_${block}_bf_to_mri_affinereg.itksnap
 
   # Affine resliced MRI matched to the blockface
   MRI_TO_BF_AFFINE=$BF_REG_DIR/${id}_${block}_mri_toblock_affine.nii.gz
@@ -104,8 +109,8 @@ function set_block_vars()
   BF_REORIENT_VIZ=$BF_REG_DIR/${id}_${block}_blockface_reorient_2d.mat
 
   # Intensity remapped histology block
-  BF_TOMOLD_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_reoriented.nii.gz
-  BF_TOMOLD_INVGREEN_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_invgreen_reoriented.nii.gz
+  BF_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_reoriented.nii.gz
+  BF_MRILIKE_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_invgreen_reoriented.nii.gz
 
 
 }
@@ -224,6 +229,7 @@ function process_mri()
     -o $MOLD_TO_HIRES_WORKSPACE
 
   # Also create a workspace for the mold - to help match up blockface slices
+  mkdir -p $MOLD_WORKSPACE_DIR
   itksnap-wt \
     -lsm $MOLD_BINARY -psn "Mold Binary" \
     -laa $MOLD_MRI_N4 -psn "Mold MRI" -props-set-transform $MOLD_RIGID_MAT \
@@ -231,16 +237,22 @@ function process_mri()
     -o $MOLD_WORKSPACE_SRC
 
   # Add each of the blocks to it
-  for block in $(ls $ROOT/${id}/blockface); do
+  for block in $(ls $ROOT/work/${id}/blockface); do
     
     set_block_vars $id $block
 
     itksnap-wt \
       -i $MOLD_WORKSPACE_SRC \
-      -laa $BF_RECON_NII -psn ${block} -props-set-mcd RGB \
+      -laa $BF_RECON_NII -psn ${block} -ta ${block} -props-set-mcd RGB \
       -o $MOLD_WORKSPACE_SRC
 
   done
+
+  # Add a layer for retrieving optimal viewing orientation
+  itksnap-wt \
+    -i $MOLD_WORKSPACE_SRC \
+    -laa $MOLD_MRI_N4 -psn "Best Viewport" -ta "Viewport" -props-set-transform $MOLD_RIGID_MAT \
+    -o $MOLD_WORKSPACE_SRC
 }
 
 function process_mri_all()
@@ -273,49 +285,56 @@ function register_blockface()
 
   mkdir -p $BF_REG_DIR
 
-  # Get the origin of the slit mold
-  MOLD_CENTER=$(c3d $MOLD_BINARY -probe 50% | awk '{print $5,$6,$7}')
-  BLOCK_ORIGIN=$(echo $MOLD_CENTER | awk -v z=$zpos '{printf "%fx%fx%fmm",$1,$2,z}')
+  # Make sure the manual workspace exists
+  if [[ ! -f $MOLD_WORKSPACE_RES ]]; then
+    echo "Missing manual matching $MOLD_WORKSPACE_RES"
+    exit
+  fi
 
-  # The flip command - this is some fancy regexp code, but basically maps 000 to nothing, 101 to 
-  # -flip x -flip z and so on.
-  FLIPCMD=$(echo $flip | \
-    sed -e "s/\(^1..\)/\1 -flip x/" -e "s/\(^.1.\)/\1 -flip y/" -e "s/\(^..1\)/\1 -flip z/" | \
-    sed -e "s/^...\(.*\)/\1/")
+<<'register_blockface_skip1'  
 
-  # Flip and set the origin of the blockface image and also extract the negative of the 
-  # green channel, which seems to have the best contrast
-  c3d -verbose -mcs $BF_RECON_NII \
-    -foreach $FLIPCMD -origin-voxel-coord 50% $BLOCK_ORIGIN -endfor \
-    -omc $BF_TOMOLD_INIT \
-    -pop -stretch 0 255 255 0 -o $BF_TOMOLD_INIT_INVGREEN
+  # Extract the transformation that maps the blockface into the mold space
+  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt ${block} -props-get-transform \
+    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
+    > $BF_TOMOLD_MANUAL_RIGID
 
-  # Reslice the MRI into the space of the histology block and make it RGB
-  c3d -verbose $BF_TOMOLD_INIT $MOLD_MRI_N4 -reslice-matrix $MOLD_RIGID_MAT -o $MRI_TO_BF_INIT
-  c3d -verbose $BF_TOMOLD_INIT $MOLD_MRI_MASK_MOLDSPC -reslice-identity -o $MRI_TO_BF_INIT_MASK
+  # Extract the green channel from the blockface image
+  c3d -verbose -mcs $BF_RECON_NII -pop -stretch 0 255 255 0 -o $BF_MRILIKE
 
-  # Generate initial rotation matrix
-  ROT_CTR=$(echo $BLOCK_ORIGIN | sed -e "s/x/ /g")
-  c3d_affine_tool -tran $ROT_CTR -rot $rot_init 0 0 1 -tran $ROT_CTR -inv -mult -mult \
-    -o $BF_TO_MRI_RIGID_INIT
+  # Reslice the mold MRI into the space of the blockface image
+  greedy -d 3 -rf $BF_MRILIKE \
+    -rm $MOLD_MRI_N4 $MRI_TO_BF_INIT \
+    -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BF_INIT_MASK \
+    -r $BF_TOMOLD_MANUAL_RIGID,-1 $MOLD_RIGID_MAT
 
   # Perform the rigid, then affine registration
-  greedy -d 3 -a -dof 6 -i $MRI_TO_BF_INIT $BF_TOMOLD_INIT_INVGREEN \
-    -gm $MRI_TO_BF_INIT_MASK -o $BF_TO_MRI_RIGID_INVGREEN \
-    -m NCC 4x4x4 -n 60x40x0 -ia $BF_TO_MRI_RIGID_INIT
+  greedy -d 3 -a -dof 6 -i $MRI_TO_BF_INIT $BF_MRILIKE \
+    -gm $MRI_TO_BF_INIT_MASK -o $BF_TO_MRI_RIGID \
+    -m NCC 4x4x4 -n 60x40x0 -ia-identity
 
-  greedy -d 3 -a -dof 12 -i $MRI_TO_BF_INIT $BF_TOMOLD_INIT_INVGREEN \
-    -gm $MRI_TO_BF_INIT_MASK -o $BF_TO_MRI_AFFINE_INVGREEN \
-    -m NCC 4x4x4 -n 60x40x0 -ia $BF_TO_MRI_RIGID_INVGREEN
+  greedy -d 3 -a -dof 12 -i $MRI_TO_BF_INIT $BF_MRILIKE \
+    -gm $MRI_TO_BF_INIT_MASK -o $BF_TO_MRI_AFFINE \
+    -m NCC 4x4x4 -n 60x40x0 -ia $BF_TO_MRI_RIGID
 
-  # Calculate the in-plane rotation of the blockface image that would make it look
-  # correctly oriented. This uses the matrix viewmatrix.mat that rotates the holder
+  # Save a workspace with the registration result
+  itksnap-wt \
+    -laa $MRI_TO_BF_INIT -psn "MRI" -las $MRI_TO_BF_INIT_MASK \
+    -laa $BF_MRILIKE -psn "BF_MRILIKE_NOREG" \
+    -laa $BF_MRILIKE -psn "BF_MRILIKE" -props-set-transform $BF_TO_MRI_AFFINE \
+    -laa $BF_RECON_NII -psn "BF" -props-set-transform $BF_TO_MRI_AFFINE -props-set-mcd RGB \
+    -o $BF_TO_MRI_WORKSPACE
+
+register_blockface_skip1
+
+  # Extract the in-plane rotation of the mold MRI into human-presentable orientation
+  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
+    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
+    > $MOLD_REORIENT_VIZ
+
   # around the z axis such that the MRI is properly oriented for viewing
-  BF_TOMOLD_INIT_CENTER=$(c3d $BF_TOMOLD_INIT_INVGREEN -probe 50% \
-    | awk '{print $5,$6,$7}')
-
+  BF_TOMOLD_INIT_CENTER=$(c3d $BF_MRILIKE -probe 50% | awk '{print $5,$6,$7}')
   TARGET_ROTATION_ANGLE=$(c3d_affine_tool \
-    $MOLD_REORIENT_VIZ $BF_TO_MRI_AFFINE_INVGREEN -mult -info-full \
+    $MOLD_RIGID_MAT -inv $MOLD_REORIENT_VIZ -mult -info-full \
     | grep -A 1 'Rotation angle:' | tail -n 1 | awk '{print $1}')
 
   # Create the matrix
@@ -324,17 +343,17 @@ function register_blockface()
 
   # Reslice the blockface into the presentable orientation
   greedy -d 3 \
-    -rf $BF_TOMOLD_INIT_INVGREEN \
-    -rm $BF_TOMOLD_INIT_INVGREEN $BF_TOMOLD_INVGREEN_REORIENTED \
-    -rm $BF_TOMOLD_INIT $BF_TOMOLD_REORIENTED \
+    -rf $BF_MRILIKE \
+    -rm $BF_MRILIKE $BF_MRILIKE_REORIENTED \
+    -rm $BF_RECON_NII $BF_REORIENTED \
     -r  $BF_REORIENT_VIZ
 
+  exit
   # Reslice the MRI into block space using the affine registration result
   greedy -d 3 -rf $MRI_TO_BF_INIT_MASK -rm $MOLD_MRI_N4 $MRI_TO_BF_AFFINE \
     -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BF_AFFINE_MASK \
-    -r $BF_REORIENT_VIZ $BF_TO_MRI_AFFINE_INVGREEN,-1 $MOLD_RIGID_MAT
+    -r $BF_REORIENT_VIZ $BF_TO_MRI_AFFINE,-1 $MOLD_RIGID_MAT
 
-  exit
   
   # Reslice the high-resolution MRI as well. Also reslice the high-resolution MRI mask, 
   # so we can perform registration to histology later
