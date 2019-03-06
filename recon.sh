@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x 
+set -x -e
 ROOT=/data/picsl/pauly/tau_atlas
 mkdir -p $ROOT/dump
 
@@ -27,8 +27,10 @@ function set_specimen_vars()
   MOLD_MRI_INPUT_DIR=$ROOT/input/${id}/mold_mri
   MOLD_MRI=$MOLD_MRI_INPUT_DIR/mtl7t.nii.gz
   MOLD_CONTOUR=$MOLD_MRI_INPUT_DIR/contour_image.nii.gz
-  MOLD_BINARY=$MOLD_MRI_INPUT_DIR/slitmold.nii.gz
-  MOLD_RIGID_MAT=$MOLD_MRI_INPUT_DIR/holderrotation.mat
+
+  # The slitmold may not be in the orientation we want. This is the raw input
+  MOLD_BINARY_NATIVE=$MOLD_MRI_INPUT_DIR/slitmold.nii.gz
+  MOLD_RIGID_MAT_NATIVE=$MOLD_MRI_INPUT_DIR/holderrotation.mat
 
   # MRI inputs (hi-res 9.4T)
   HIRES_MRI_INPUT_DIR=$ROOT/input/${id}/hires_mri
@@ -43,6 +45,9 @@ function set_specimen_vars()
 
   # Registration between low-res and high-res MRI
   MRI_WORK_DIR=$ROOT/work/${id}/mri
+  MOLD_BINARY=$MRI_WORK_DIR/slitmold_std.nii.gz
+  MOLD_RIGID_MAT=$MRI_WORK_DIR/holderrotation_std.mat
+  MOLD_NATIVE_TO_STD_MAT=$MRI_WORK_DIR/mold_native_to_std.mat
   MOLD_MRI_CROP=$MRI_WORK_DIR/${id}_mold_mri_crop.nii.gz
   MOLD_MRI_MASK_NATIVESPC=$MRI_WORK_DIR/${id}_mold_mri_mask_nativespc.nii.gz
   MOLD_MRI_MASK_MOLDSPC=$MRI_WORK_DIR/${id}_mold_mri_mask_moldspc.nii.gz
@@ -112,6 +117,13 @@ function set_block_vars()
   BF_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_reoriented.nii.gz
   BF_MRILIKE_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_invgreen_reoriented.nii.gz
 
+  # Sequence of transforms to take MOLD MRI to native space
+  MRI_TO_BF_AFFINE_FULL="$BF_TO_MRI_AFFINE,-1 $BF_TOMOLD_MANUAL_RIGID,-1 $MOLD_RIGID_MAT"
+  HIRES_TO_BF_AFFINE_FULL="$MRI_TO_BF_AFFINE_FULL $HIRES_TO_MOLD_AFFINE"
+  HIRES_TO_BF_WARP_FULL="$HIRES_TO_BF_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
+
+  # Workspace of MRI in BF space
+  MRI_TO_BF_WORKSPACE=$BF_REG_DIR/${id}_${block}_mri_to_bf.itksnap
 
 }
 
@@ -122,7 +134,7 @@ function set_block_vars()
 function recon_blockface()
 {
   # Read all the arguments
-  read -r id block spacing offset size resample first last args <<< "$@"
+  read -r id block spacing offset size resample first last swapdim args <<< "$@"
 
   # Get the variables
   set_block_vars $id $block
@@ -150,9 +162,15 @@ function recon_blockface()
       RESCOM=$(echo $resample | awk '{printf "-smooth-fast %gvox -resample %g%%\n",$1/2.0,100/$1}')
     fi
 
+    # Crop and resample
     c2d -mcs -verbose $BF_INPUT_DIR/$fn \
       -foreach -region $offset $size $RESCOM -endfor \
-      -type uchar -oo $RGBDIR/rgb%02d_${fn}
+      -type uchar -omc $TMPDIR/temp_${fn/.jpg/.png}
+
+    # Swap dimensions (rotate & flip)
+    c3d -verbose -mcs $TMPDIR/temp_${fn/.jpg/.png} \
+      -foreach -swapdim ${swapdim} -orient RAI -endfor \
+      -type uchar -oo $RGBDIR/rgb%02d_${fn/.jpg/.png}
 
   done
 
@@ -161,9 +179,9 @@ function recon_blockface()
 
   c3d \
     -verbose \
-    $RGBDIR/rgb00*.jpg -tile z -popas R \
-    $RGBDIR/rgb01*.jpg -tile z -popas G \
-    $RGBDIR/rgb02*.jpg -tile z -popas B \
+    $RGBDIR/rgb00*.png -tile z -popas R \
+    $RGBDIR/rgb01*.png -tile z -popas G \
+    $RGBDIR/rgb02*.png -tile z -popas B \
     -push R -push G -push B \
     -foreach -spacing $spacing $FLIP -endfor \
     -omc $BF_RECON_NII
@@ -171,15 +189,18 @@ function recon_blockface()
 
 function recon_blockface_all()
 {
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
   # Process the individual blocks
-  while read -r id block args; do
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
 
     # Submit the jobs
     qsub $QSUBOPT -N "recon_bf_${id}_${block}" \
-      -l h_vmem=8G -l s_vmem=8G \
+      -l h_vmem=16G -l s_vmem=16G \
       $0 recon_blockface $id $block $args
 
-  done < $MDIR/blockface_param.txt
+  done
 
   # Wait for completion
   qsub $QSUBOPT -b y -sync y -hold_jid "recon_bf_*" /bin/sleep 0
@@ -189,13 +210,20 @@ function recon_blockface_all()
 function process_mri()
 {
   # Read all the arguments
-  read -r id args <<< "$@"
+  read -r id mold_orient args <<< "$@"
 
   # Get the variables
   set_specimen_vars $id
 
   # Make directories
   mkdir -p $MRI_WORK_DIR
+
+  # Stanardize the orientation of the molds
+  c3d $MOLD_BINARY_NATIVE -orient $mold_orient -o $MOLD_BINARY
+  c3d_affine_tool -sform $MOLD_BINARY -sform $MOLD_BINARY_NATIVE -inv -mult -inv \
+    -o $MOLD_NATIVE_TO_STD_MAT
+    
+  c3d_affine_tool $MOLD_RIGID_MAT_NATIVE $MOLD_NATIVE_TO_STD_MAT -mult -o $MOLD_RIGID_MAT 
 
   # Crop the MRI to the region used to make the mold
   c3d $MOLD_CONTOUR $MOLD_MRI -reslice-identity -o $MOLD_MRI_CROP
@@ -258,12 +286,12 @@ function process_mri()
 function process_mri_all()
 {
   # Process the individual blocks
-  while read -r id args; do
+  while read -r id orient args; do
 
     # Submit the jobs
     qsub $QSUBOPT -N "mri_reg_${id}" \
-      -l h_vmem=4G -l s_vmem=4G \
-      $0 process_mri $id $args
+      -l h_vmem=8G -l s_vmem=8G \
+      $0 process_mri $id $orient $args
 
   done < $MDIR/specimen.txt
 
@@ -278,7 +306,7 @@ function register_blockface()
   #  zpos: offset of the block in z (mm)
   #  flip: 3-digit code (010 means flip y)
   #  rot_init, dx_init, dy_init: initial in-plane transform
-  read -r id block zpos flip rot_init dx_init dy_init args <<< "$@"
+  read -r id block args <<< "$@"
 
   # Get the variables
   set_block_vars $id $block
@@ -290,8 +318,6 @@ function register_blockface()
     echo "Missing manual matching $MOLD_WORKSPACE_RES"
     exit
   fi
-
-<<'register_blockface_skip1'  
 
   # Extract the transformation that maps the blockface into the mold space
   itksnap-wt -i $MOLD_WORKSPACE_RES -lpt ${block} -props-get-transform \
@@ -324,50 +350,50 @@ function register_blockface()
     -laa $BF_RECON_NII -psn "BF" -props-set-transform $BF_TO_MRI_AFFINE -props-set-mcd RGB \
     -o $BF_TO_MRI_WORKSPACE
 
-register_blockface_skip1
-
-  # Extract the in-plane rotation of the mold MRI into human-presentable orientation
-  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
-    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
-    > $MOLD_REORIENT_VIZ
-
-  # around the z axis such that the MRI is properly oriented for viewing
-  BF_TOMOLD_INIT_CENTER=$(c3d $BF_MRILIKE -probe 50% | awk '{print $5,$6,$7}')
-  TARGET_ROTATION_ANGLE=$(c3d_affine_tool \
-    $MOLD_RIGID_MAT -inv $MOLD_REORIENT_VIZ -mult -info-full \
-    | grep -A 1 'Rotation angle:' | tail -n 1 | awk '{print $1}')
-
-  # Create the matrix
-  c3d_affine_tool -tran $BF_TOMOLD_INIT_CENTER -rot $TARGET_ROTATION_ANGLE 0 0 -1 \
-    -tran $BF_TOMOLD_INIT_CENTER -inv -mult -mult -o $BF_REORIENT_VIZ
-
-  # Reslice the blockface into the presentable orientation
-  greedy -d 3 \
-    -rf $BF_MRILIKE \
-    -rm $BF_MRILIKE $BF_MRILIKE_REORIENTED \
-    -rm $BF_RECON_NII $BF_REORIENTED \
-    -r  $BF_REORIENT_VIZ
-
-  exit
   # Reslice the MRI into block space using the affine registration result
-  greedy -d 3 -rf $MRI_TO_BF_INIT_MASK -rm $MOLD_MRI_N4 $MRI_TO_BF_AFFINE \
+  greedy -d 3 -rf $BF_MRILIKE \
+    -rm $MOLD_MRI_N4 $MRI_TO_BF_AFFINE \
     -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BF_AFFINE_MASK \
-    -r $BF_REORIENT_VIZ $BF_TO_MRI_AFFINE,-1 $MOLD_RIGID_MAT
+    -r $MRI_TO_BF_AFFINE_FULL
 
-  
   # Reslice the high-resolution MRI as well. Also reslice the high-resolution MRI mask, 
   # so we can perform registration to histology later
-  greedy -d 3 -rf $MRI_TO_BLOCK_INIT_MASK -rm $HIRES_MRI $HIRES_MRI_TO_BLOCK_AFFINE \
-    -r $BLOCK_REORIENT_VIZ $BLOCK_TO_MRI_AFFINE_INVGREEN,-1 $HOLDERMAT $HIRES_MRI_AFFINE
+  greedy -d 3 -rf $BF_MRILIKE -rm $HIRES_MRI $HIRES_MRI_TO_BF_AFFINE \
+    -r $HIRES_TO_BF_AFFINE_FULL
 
-  greedy -d 3 -rf $MRI_TO_BLOCK_INIT_MASK -rm $HIRES_MRI $HIRES_MRI_TO_BLOCK_WARPED \
-    -ri NN -rm $HIRES_REGMASK $HIRES_MRI_MASK_TO_BLOCK_WARPED \
-    -r $BLOCK_REORIENT_VIZ $BLOCK_TO_MRI_AFFINE_INVGREEN,-1 $HOLDERMAT $HIRES_MRI_AFFINE $HIRES_INV_WARP 
+  # For some reason Greedy is throwing up errors if I c
+  greedy -d 3 -rf $BF_MRILIKE \
+    -rm $HIRES_MRI $HIRES_MRI_TO_BF_WARPED \
+    -ri NN -rm $HIRES_MRI_REGMASK $HIRES_MRI_MASK_TO_BF_WARPED \
+    -r $HIRES_TO_BF_WARP_FULL
 
-
-
-
+  # Create a workspace native to the blockface image
+  itksnap-wt \
+    -laa $BF_RECON_NII -psn "Blockface" \
+    -laa $MRI_TO_BF_AFFINE -psn "Mold MRI" \
+    -las $MRI_TO_BF_AFFINE_MASK -psn "Mold Mask" \
+    -laa $HIRES_MRI_TO_BF_WARPED -psn "Hires MRI Warped" \
+    -las $HIRES_MRI_MASK_TO_BF_WARPED -psn "Hires Mask" \
+    -o $MRI_TO_BF_WORKSPACE
 }
+
+
+function register_blockface_all()
+{
+  # Process the individual blocks
+  while read -r id block args; do
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "reg_bf_${id}_${block}" \
+      -l h_vmem=8G -l s_vmem=8G \
+      $0 register_blockface $id $block
+
+  done < $MDIR/blockface_param.txt
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "recon_bf_*" /bin/sleep 0
+}
+
 
 function main()
 {

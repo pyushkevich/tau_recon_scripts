@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x -e
 RSYNC_ROOT=10.150.13.41:/volume1/Histology/2018_UCLM
 ROOT=/data/picsl/pauly/tau_atlas
 
@@ -34,7 +35,7 @@ function copy_mold_mri()
 
     # Copy needed files
     for fn in mtl7t.nii.gz contour_image.nii.gz slitmold.nii.gz holderrotation.mat; do
-      cp -a $SDIR/$fn $IDIR/
+      rsync -av $SDIR/$fn $IDIR/
     done
 
   done < $MDIR/moldmri_src.txt
@@ -54,6 +55,12 @@ function copy_hires_mri()
 
     # Base filename
     local FN=$(basename $FWPATH)
+
+    # Check for existing file
+    if [[ -f $FN || -f ${FN}.gz ]]; then
+      echo Skipping $ID:$FN
+      continue
+    fi
 
     # Copy needed files
     fw download -o $FN $FWPATH
@@ -92,7 +99,7 @@ function setup_manual_mri_regs()
 }
 
 # Main entrypoint
-# copy_blockface
-# copy_mold_mri
+copy_blockface
+copy_mold_mri
 copy_hires_mri
-# setup_manual_mri_regs
+setup_manual_mri_regs
