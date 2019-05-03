@@ -167,8 +167,12 @@ function set_ihc_slice_vars()
   # The location of the slice for manual segmentation (x16)
   SLIDE_NATIVE_X16=$ROOT/input/histology/slides/$svs/${svs}_x16.png
 
+  # Long name of the slide
+  SLIDE_LONG_NAME=$(printf "%s_%s_%02d_%02d_%s" $id $block $section $slice $stain)
+
   # The location where the modified individual slides go
-  SLIDE_AFFINE_X16=$HISTO_AFFINE_X16_DIR/${id}_${block}_${section}_${slice}_${stain}_x16_aff.png
+  SLIDE_AFFINE_X16=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.png
+  SLIDE_AFFINE_X16_PDF=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.pdf
 
   # The matrix used to generate this slide. Since we might rerun scripts in the interim while
   # the segmentations are being worked on, we should keep these matrices along with the segmentations
@@ -540,6 +544,7 @@ function recon_histology()
   # Load the manifest and parse for the block of interest
   curl -s "$url" 2>&1 | \
     grep -v duplicate | \
+    grep -v multiple | \
     awk -F, -v b=$block '$3==b {print $0}' \
     > $HISTO_MATCH_MANIFEST
 
@@ -555,8 +560,20 @@ function recon_histology()
   local NISSL_ZRANGE=$TMPDIR/nissl_zrange.txt
   rm -rf $NISSL_ZRANGE
 
+  # Whether the block is sectioned anteriorly or posteriorly (this affects how ZPOS
+  # is computed.
+  # TODO: associate ZPOS with slice at the blockface stage, not this late in the process
+  local ZFLIP=$(echo $block | cut -c 4-4 | sed -e "s/a/0/" -e "s/p/1/")
+
   while IFS=, read -r svs stain dummy section slice args; do
 
+    # If the slice number is not specified, fill in missing information and generate warning
+    if [[ ! $slice ]]; then
+      echo "WARNING: missing slice for $svs in histo matching Google sheet"
+      if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
+    fi
+
+    # Set the variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
 
     # If the section number is not specified, then skip this line
@@ -565,17 +582,23 @@ function recon_histology()
       continue
     fi
 
-    # If the slice number is not specified, fill in missing information and generate warning
-    if [[ ! $slice ]]; then
-      echo "WARNING: missing slice for $svs in histo matching Google sheet"
-      if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
-    fi
-
     # Generate the pattern to search for
     SEARCH_PAT=$(printf "%s_%02d_%02d" $block $section $slice)
 
     # Get the z-position of this slice in the world coordinates of the blockface stack nii
-    ZPOS=$(grep -n "$SEARCH_PAT" $BF_SLIDES | awk -F: -v t=$THK '{print ($1-1) * t}')
+    if [[ $ZFLIP -eq 0 ]]; then
+      ZPOS=$(grep -n "$SEARCH_PAT" $BF_SLIDES | awk -F: -v t=$THK '{print ($1-1) * t}')
+    else
+      ZPOS=$(grep -n "$SEARCH_PAT" $BF_SLIDES | awk -F: -v t=$THK '{print (1-$1) * t}')
+    fi
+
+    # If not found, generate warning, do not add slice
+    # TODO: there are some missing blockface scans. We need a more robust way to generate 
+    # z coordinates and perform stacking
+    if [[ ! $ZPOS ]]; then 
+      echo "WARNING: no matching blockface image for $svs"
+      continue
+    fi
 
     # Get the path to the MRI-like histology slide
     echo $svs $ZPOS $SLIDE_TEARFIX >> $manifest
@@ -600,10 +623,10 @@ function recon_histology()
   stack_greedy -N recon -z 1.6 0.5 \
     -m NCC 8x8 -n 100x40x0x0 -gm-trim 8x8 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy volmatch -i $HIRES_MRI_TO_BF_WARPED -gm $HIRES_MRI_MASK_TO_BF_WARPED\
+  stack_greedy -N volmatch -i $HIRES_MRI_TO_BF_WARPED -gm $HIRES_MRI_MASK_TO_BF_WARPED\
     -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy voliter -na 5 -nd 5 -w 4 \
+  stack_greedy -N voliter -na 5 -nd 5 -w 4 \
     -m NCC 8x8 -n 100x40x10x0 -s 10.0vox 2.0vox $HISTO_RECON_DIR
 
   # Splat the NISSL slides if they are available
@@ -614,7 +637,7 @@ function recon_histology()
     local nissl_zstep=0.5
 
     stack_greedy splat -o $HISTO_NISSL_SPLAT_IMG -i voliter 10 \
-      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.1 \
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.0 \
       -H -M $HISTO_NISSL_SPLAT_MANIFEST -rb 255.0 $HISTO_RECON_DIR
 
   fi
@@ -737,6 +760,9 @@ function recon_for_histo_manseg()
     c2d $REFSPC -popas R -mcs $SLIDE_NATIVE_X16 -foreach \
       -spacing $SPC_X16 -origin $ORG_X16 -insert R 1 -reslice-matrix $SLIDE_AFFINE_X16_MATRIX \
       -endfor -type uchar -omc $SLIDE_AFFINE_X16
+
+    # Convert to PDF
+    convert $SLIDE_AFFINE_X16 $SLIDE_AFFINE_X16_PDF
 
   done < $HISTO_MATCH_MANIFEST
 }
