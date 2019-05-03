@@ -4,6 +4,7 @@ import openslide
 import numpy as np
 import os, time, math, sys
 import getopt
+import parse
 import SimpleITK as sitk
 
 # Little function to round numbers up to closest divisor of d
@@ -29,8 +30,9 @@ def process_svs(p):
         img.save(p['summary'] + '_thumbnail.tiff')
 
         # Get the label
-        img = slide.associated_images['label']
-        img.save(p['summary'] + '_label.tiff')
+        if 'label' in slide.associated_images:
+            img = slide.associated_images['label']
+            img.save(p['summary'] + '_label.tiff')
 
     if len(p['out_img']):
 
@@ -38,6 +40,25 @@ def process_svs(p):
         tile_size = p['tile_size']
         wx = round_up(slide.dimensions[0], tile_size)
         wy = round_up(slide.dimensions[1], tile_size)
+
+        # Get the image spacing from the header, in mm units
+        (sx, sy) = (0.0, 0.0)
+        if 'openslide.mpp-x' in slide.properties:
+            sx = float(slide.properties['openslide.mpp-x']) * tile_size / 1000.0
+            sy = float(slide.properties['openslide.mpp-y']) * tile_size / 1000.0
+        elif 'openslide.comment' in slide.properties:
+            for z in slide.properties['openslide.comment'].split('\n'):
+                r = parse.parse('Resolution = {} um', z)
+                if r is not None:
+                    sx = float(r[0]) * tile_size / 1000.0
+                    sy = float(r[0]) * tile_size / 1000.0
+
+        # If there is no spacing, throw exception
+        if sx == 0.0 or sy == 0.0:
+          raise Exception('No spacing information in image')
+
+        # Report spacing information
+        print("Spacing of the mri-like image: %gx%gmm\n" % (sx, sy))
 
         # Allocate output image
         (ox,oy)=(wx/tile_size, wy/tile_size)
@@ -87,13 +108,30 @@ def process_svs(p):
 
         # Write the result as a NIFTI file
         res = sitk.GetImageFromArray(oimg, False)
-        res.SetSpacing((float(slide.properties['openslide.mpp-x']) * tile_size,
-                       float(slide.properties['openslide.mpp-y']) * tile_size))
+        res.SetSpacing((sx, sy))
         sitk.WriteImage(res, p['out_img'])
+
+    if len(p['out_x16']):
+
+        # Requested x16 middle-resolution image. The middle resolution images
+        # can be generated using openslide very easily
+        best_lev = 0
+        for lev in range(slide.level_count):
+          dsam=int(slide.level_downsamples[lev] + 0.5)
+          if dsam <= 16:
+            best_lev = lev
+
+        # Downsample at this level
+        image=slide.read_region((0,0), best_lev, slide.level_dimensions[best_lev])
+        image.save(p['out_x16'])
+
+        # Print slide information
+        print("Level dimensions: ", slide.level_dimensions)
+        print("Level downsamples: ", slide.level_downsamples)
 
 # Usage
 def usage(exit_code):
-    print('process_raw_slide -i <input_svs> -o <output> [-t tile_size]')
+    print('process_raw_slide -i <input_svs> -o <output> -m <out_x16> [-t tile_size]')
     sys.exit(exit_code)
     
 # Main
@@ -102,11 +140,12 @@ def main(argv):
     p = {'in_img' : '', 
          'out_img' : '', 
          'summary' : '',
+         'out_x16' : '',
          'tile_size' : 100}
 
     # Read options
     try:
-        opts, args = getopt.getopt(argv, "hi:o:t:s:")
+        opts, args = getopt.getopt(argv, "hi:o:t:s:m:")
     except getopt.GetoptError:
         usage(2)
 
@@ -119,6 +158,8 @@ def main(argv):
             p['out_img'] = arg
         elif opt == '-s':
             p['summary'] = arg
+        elif opt == '-m':
+            p['out_x16'] = arg
         elif opt == '-t':
             p['tile_size'] = int(arg)
 
