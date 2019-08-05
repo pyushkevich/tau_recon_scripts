@@ -1,6 +1,7 @@
-nd: Job
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: hist-prep-job-%ID%-%SVS%
+  name: hist-prep-job-%JOBID%
 spec:
   backoffLimit: 3
   template:
@@ -18,8 +19,10 @@ spec:
         args: [ "process_slide.sh", "%ID%", "%SVS%" ]
         resources:
           limits:
-            memory: "4Gi"
+            memory: "2Gi"
         volumeMounts:
           - name: google-cloud-key
             mountPath: /var/secrets/google
       restartPolicy: Never
+      nodeSelector:
+        tier: lowcost
