@@ -7,8 +7,13 @@
 
 # Globals
 ROOT=/data/picsl/pauly/tau_atlas
-ROOT=/Users/pauly/tk/docker/tau_atlas/tau_atlas
 MDIR=$ROOT/manifest
+
+# Run kubectl with additional options
+function kube()
+{
+  kubectl --server https://kube.itksnap.org --insecure-skip-tls-verify=true "$@"
+}
 
 # Get all the slide identifiers in the manifest file for a specimen
 function get_specimen_manifest_slides()
@@ -156,7 +161,7 @@ function preprocess_specimen_slides()
     BASE="gs://mtl_histology/$id/histo_proc/${svs}/preproc/${svs}_"
 
     # Check if we have to do this
-    for fn in thumbnail.tiff label.tiff resolution.txt mrilike.nii.gz tearfix.nii.gz; do
+    for fn in thumbnail.tiff label.tiff x16.png resolution.txt mrilike.nii.gz tearfix.nii.gz; do
       fn_full=${BASE}${fn}
       if ! grep "$fn_full" $FREMOTE; then
         force=1
@@ -166,7 +171,7 @@ function preprocess_specimen_slides()
     if [[ $force ]]; then
 
       # Get a job ID
-      JOB=$(echo $id $svs | md5 | cut -c 1-6)
+      JOB=$(echo $id $svs | md5sum | cut -c 1-6)
 
       # Create a yaml from the template
       YAML=/tmp/preproc_${JOB}.yaml
@@ -175,12 +180,20 @@ function preprocess_specimen_slides()
         > $YAML
 
       # Run the yaml
-      echo kubectl apply -f $YAML
+      kube apply -f $YAML
 
     fi
 
   done
 }
+
+function preprocess_slides_all()
+{
+  for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
+    preprocess_specimen_slides $id
+  done
+}
+
 
 # Main entrypoint into script
 COMMAND=$1

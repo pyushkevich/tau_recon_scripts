@@ -26,8 +26,12 @@ fi
 # Extract a thumbnail
 SUMMARY=./data/${svs}_thumbnail.tiff
 LABELFILE=./data/${svs}_label.tiff
-RESFILE=./data/${svs}_resolution.txt
 python process_raw_slide.py -i $svslocal -s ./data/${svs}
+
+# Mid-resolution image
+MIDRES=./data/${svs}_x16.png
+RESFILE=./data/${svs}_resolution.txt
+python process_raw_slide.py -i $svslocal -m $MIDRES > $RESFILE
 
 # Get the MRI-like appearance
 MRILIKE=./data/${svs}_mrilike.nii.gz
@@ -41,9 +45,8 @@ c2d $MRILIKE -clip 0 1 -stretch 0 1 1 0 \
   -push G -push M -replace 0 1 1 0 -times \
   -add -o $TEARFIX
 
-
 # Check that each of the outputs exists
-OUTPUTS="$SUMMARY $LABELFILE $RESFILE $MRILIKE $TEARFIX"
+OUTPUTS="$SUMMARY $LABELFILE $MIDRES $RESFILE $MRILIKE $TEARFIX"
 for out in $OUTPUTS; do
   if [[ ! -f $out ]]; then
     echo "Failed to generate output $out"
