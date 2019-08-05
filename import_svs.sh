@@ -121,7 +121,7 @@ function main()
     if [[ $(process_slide $i check) == "runme" ]]; then
       qsub -j y -cwd -V -o $ROOT/dump -N "aperio_$i" \
         $0 process_slide $i
-      sleep 90
+      sleep 30
     fi
 
   done

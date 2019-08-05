@@ -122,6 +122,11 @@ function set_block_vars()
   HIRES_TO_BF_AFFINE_FULL="$MRI_TO_BF_AFFINE_FULL $HIRES_TO_MOLD_AFFINE"
   HIRES_TO_BF_WARP_FULL="$HIRES_TO_BF_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
 
+  # Transforms to take blockface space to hires MRI space 
+  BF_TO_MRI_AFFINE_FULL="$MOLD_RIGID_MAT,-1 $BF_TOMOLD_MANUAL_RIGID $BF_TO_MRI_AFFINE"
+  BF_TO_HIRES_AFFINE_FULL="$HIRES_TO_MOLD_AFFINE,-1 $BF_TO_MRI_AFFINE_FULL"
+  BF_TO_HIRES_FULL="$MOLD_TO_HIRES_WARP $BF_TO_HIRES_AFFINE_FULL"
+
   # Workspace of MRI in BF space
   MRI_TO_BF_WORKSPACE=$BF_REG_DIR/${id}_${block}_mri_to_bf.itksnap
 
@@ -141,8 +146,22 @@ function set_block_vars()
   HISTO_NISSL_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat_manifest.txt
   HISTO_NISSL_SPLAT_IMG=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat.nii.gz
 
-  # For-segmentation fiels
-  HISTO_AFFINE_X16_DIR=$HISTO_REG_DIR/affine_x16
+  # Files exported to the segmentation server. These should be stored in a convenient
+  # to copy location 
+  HISTO_AFFINE_X16_DIR=$ROOT/export/affine_x16/${id}/${block}
+
+  # Where histology-derived density maps are stored
+  HISTO_DENSITY_DIR=$ROOT/work/$id/histomaps/$block
+
+  # Splatted densities (patterns)
+  HISTO_DENSITY_SPLAT_MANIFEST_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_%s_rgb_splat_manifest.txt
+  HISTO_DENSITY_SPLAT_IMG_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_%s_rgb_splat.nii.gz
+  HISTO_DENSITY_SPLAT_IMG_TOHIRES_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_%s_rgb_splat_tohires.nii.gz
+
+  # Splatted images from which densities are derived
+  HISTO_DENSITY_SRC_SPLAT_MANIFEST_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_src_%s_rgb_splat_manifest.txt
+  HISTO_DENSITY_SRC_SPLAT_IMG_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_src_%s_rgb_splat.nii.gz
+
 }
 
 
@@ -174,15 +193,30 @@ function set_ihc_slice_vars()
   SLIDE_AFFINE_X16=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.png
   SLIDE_AFFINE_X16_PDF=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.pdf
 
-  # The matrix used to generate this slide. Since we might rerun scripts in the interim while
-  # the segmentations are being worked on, we should keep these matrices along with the segmentations
-  SLIDE_AFFINE_X16_MATRIX=$HISTO_AFFINE_X16_DIR/${id}_${block}_${section}_${slice}_${stain}_x16_aff.mat
+  # The matrix used to generate this slide. Since we might rerun scripts in the 
+  # interim while the segmentations are being worked on, we should keep these 
+  # matrices along with the segmentations
+  SLIDE_AFFINE_X16_MATRIX=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.mat
 
-
+  # Pattern for histology-derived density maps
+  SLIDE_DENSITY_MAP_PATTERN=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME}_density_%s.nii.gz
+  SLIDE_DENSITY_MAP_THRESH_PATTERN=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME}_density_%s_thresh.nii.gz
 
 }
 
+# Locate the SVS file on histology drive
+function get_slide_url()
+{
+  local SVS=${1?}
+  local URLLIST=$ROOT/input/histology/slide_src.txt
 
+  for url in $(cat $URLLIST); do
+    local x=$(basename $url | sed -e "s/\..*//")
+    if [[ $x == $SVS ]]; then
+      echo $url
+    fi
+  done
+}
 
 
 # This function reconstructs the blockface images
@@ -637,7 +671,7 @@ function recon_histology()
     local nissl_zstep=0.5
 
     stack_greedy splat -o $HISTO_NISSL_SPLAT_IMG -i voliter 10 \
-      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.0 \
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_NISSL_SPLAT_MANIFEST -rb 255.0 $HISTO_RECON_DIR
 
   fi
@@ -707,6 +741,12 @@ function recon_for_histo_manseg()
   # Parse over the histology slices
   while IFS=, read -r svs stain dummy section slice args; do
 
+    # If the slice number is not specified, fill in missing information and generate warning
+    if [[ ! $slice ]]; then
+      echo "WARNING: missing slice for $svs in histo matching Google sheet"
+      if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
+    fi
+
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
 
     # Get the last affine transform
@@ -757,12 +797,13 @@ function recon_for_histo_manseg()
 
     # Apply the transformation to the slice, but first adjust the spacing and the origin. The 
     # Spacing of the slice is known, but the origin should be adjusted
-    c2d $REFSPC -popas R -mcs $SLIDE_NATIVE_X16 -foreach \
-      -spacing $SPC_X16 -origin $ORG_X16 -insert R 1 -reslice-matrix $SLIDE_AFFINE_X16_MATRIX \
-      -endfor -type uchar -omc $SLIDE_AFFINE_X16
-
-    # Convert to PDF
-    convert $SLIDE_AFFINE_X16 $SLIDE_AFFINE_X16_PDF
+    if [[ -f $SLIDE_NATIVE_X16 ]]; then
+      c2d $REFSPC -popas R -mcs $SLIDE_NATIVE_X16 -foreach \
+        -spacing $SPC_X16 -origin $ORG_X16 -insert R 1 -reslice-matrix $SLIDE_AFFINE_X16_MATRIX \
+        -endfor -type uchar -omc $SLIDE_AFFINE_X16
+    else
+      echo "WARNING: missing file $SLIDE_NATIVE_X16"
+    fi
 
   done < $HISTO_MATCH_MANIFEST
 }
@@ -803,6 +844,205 @@ function recon_for_histo_manseg_all()
 
   # Wait for completion
   qsub $QSUBOPT -b y -sync y -hold_jid "recon_manseg_*" /bin/sleep 0
+}
+
+# Run kubectl with additional options
+function kube()
+{
+  kubectl --server https://kube.itksnap.org --insecure-skip-tls-verify=true "$@"
+}
+
+function gen_tau_density()
+{
+  # Standard slide parameters accepted
+  read -r id block svs stain section slice args <<< "$@"
+
+  # Get the slide variables
+  set_block_vars $id $block
+  set_ihc_slice_vars $id $block $svs $stain $section $slice $args
+
+  # Get the SVS filename
+  local url=$(get_slide_url $svs)
+
+  # If url exists, copy it to the target machine
+  if [[ ! $url ]]; then
+    echo "ERROR: No URL for slide $svs"
+    return -1
+  fi
+
+  # This is the destination
+  local fn_density=$(printf $SLIDE_DENSITY_MAP_PATTERN "tangles")
+  if [[ -f $fn_density ]]; then
+    echo "Tau density map already exists for $SVS"
+    return
+  fi
+
+  # Just the filename
+  local svsfile=$(basename $url)
+
+  # GSE url
+  local svs_gsurl="gs://svsbucket/$svsfile"
+
+  # Does it already exist?
+  if ! gsutil -q stat $svs_gsurl; then
+    mkdir -p $TMPDIR/svs
+    scp $url $TMPDIR/svs/
+    gsutil cp $TMPDIR/svs/$svsfile $svs_gsurl
+  fi
+  
+  # Modify the yaml
+  cat $ROOT/scripts/tangle-cnn-prod/job.yaml \
+    | sed -e "s/%SVSFILE%/$svsfile/g" -e "s/%SVS%/$svs/g" \
+    > $TMPDIR/myjob.yaml
+
+  # Schedule the job
+  kube apply -f $TMPDIR/myjob.yaml
+
+  # Wait for the job to complete
+  kube wait --for=condition=complete --timeout=2h job/hist-torch-job-${svs}
+
+  # Get the tau density map
+  local res_gsurl="gs://svsbucket/${svs}_tangle_density.nii.gz"
+
+  # Make sure output dir exists
+  mkdir -p $HISTO_DENSITY_DIR
+   
+  if gsutil -q stat $res_gsurl; then
+    gsutil cp $res_gsurl $fn_density
+    # gsutil rm $svs_gsurl
+    # gsutil rm $res_gsurl
+  else
+    echo "Failed: no result generated"
+    return -1
+  fi
+}
+
+# Generate tau density maps for all subjects using GKE
+function gen_tau_density_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    set_block_vars $id $block
+
+    # List the individual tau slices known for this block
+    if [[ -f $HISTO_MATCH_MANIFEST ]]; then
+
+      cat $HISTO_MATCH_MANIFEST | sed -e "s/,/ /g" | while read -r svs stain dummy section slice args; do
+
+        if [[ $stain == "Tau" ]]; then
+
+          # Wait for some room in the queue
+          while [[ $(qstat | grep recon_gke | wc -l) -gt 10 ]]; do
+            sleep 1
+          done
+
+          # If the slice number is not specified, fill in missing information and generate warning
+          echo "SLICE=$slice"
+          if [[ ! $slice -gt 0 ]]; then
+            echo "WARNING: missing slice for $svs in histo matching Google sheet"
+            if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
+          fi
+
+          # Submit the job
+          qsub $QSUBOPT -N "recon_gketau_${id}_${block}" \
+            $0 gen_tau_density $id $block $svs $stain $section $slice $args
+
+          # Pause for SSH to catch up
+          ### sleep 120
+
+        fi
+      done
+    fi
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "recon_gketau_*" /bin/sleep 0
+}
+
+# Generate the tau splat images
+function splat_tau()
+{
+  # What specimen and block are we doing this for?
+  read -r id block args <<< "$@"
+
+  # Set the block variables
+  set_block_vars $id $block
+
+  # Generate the splat manifest file
+  local fn_splat_manifest=$(printf $HISTO_DENSITY_SPLAT_MANIFEST_PATTERN "tangles")
+  local fn_splat_img=$(printf $HISTO_DENSITY_SPLAT_IMG_PATTERN "tangles")
+  local fn_splat_src_manifest=$(printf $HISTO_DENSITY_SRC_SPLAT_MANIFEST_PATTERN "tangles")
+  local fn_splat_src_img=$(printf $HISTO_DENSITY_SRC_SPLAT_IMG_PATTERN "tangles")
+  local fn_splat_img_tohires=$(printf $HISTO_DENSITY_SPLAT_IMG_TOHIRES_PATTERN "tangles")
+
+  rm -rf $fn_splat_manifest
+  while IFS=, read -r svs stain dummy section slice args; do
+
+    # If the slice number is not specified, fill in missing information and generate warning
+    if [[ ! $slice ]]; then
+      echo "WARNING: missing slice for $svs in histo matching Google sheet"
+      if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
+    fi
+
+    # Set the variables
+    set_ihc_slice_vars $id $block $svs $stain $section $slice $args
+
+    # Does the tangle density exist
+    local fn_density=$(printf $SLIDE_DENSITY_MAP_PATTERN "tangles")
+    if [[ -f $fn_density ]]; then
+
+      # Apply post-processing to density map
+      local fn_density_thresh=$(printf $SLIDE_DENSITY_MAP_THRESH_PATTERN "tangles")
+      c2d -mcs $fn_density -scale -1 -add -scale -1 -clip 0 inf -o $fn_density_thresh
+
+      echo $svs $fn_density_thresh >> $fn_splat_manifest
+      echo $svs $SLIDE_THUMBNAIL >> $fn_splat_src_manifest
+
+    fi
+
+  done < $HISTO_MATCH_MANIFEST
+
+  # Get the z-range
+  Z0=$(cat $HISTO_RECON_DIR/config/manifest.txt | awk '{print int($2-0.5)}' | sort -n | head -n 1)
+  Z1=$(cat $HISTO_RECON_DIR/config/manifest.txt | awk '{print int($2+0.5)}' | sort -n | tail -n 1)
+
+  # Splat, with some smoothing to account for voxel size
+  stack_greedy splat -o $fn_splat_img -i voliter 10 -ztol 0.6 -H \
+    -z $Z0 1.0 $Z1 -M $fn_splat_manifest -S exact -rb 0 \
+    -si 10 $HISTO_RECON_DIR 
+
+  # Splat, with some smoothing to account for voxel size
+  stack_greedy splat -o $fn_splat_src_img -i voliter 10 -ztol 0.6 -H \
+    -z $Z0 1.0 $Z1 -M $fn_splat_src_manifest -S exact -rb 255.0 \
+    -si 10 $HISTO_RECON_DIR 
+
+  # Transform into original MRI space
+  greedy -d 3 -rf $HIRES_MRI -rm $fn_splat_img $fn_splat_img_tohires \
+    -r $BF_TO_HIRES_FULL
+}
+
+function splat_tau_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "splat_tau_${id}_${block}" \
+      -l h_vmem=8G -l s_vmem=8G \
+      $0 splat_tau $id $block
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "splat_tau*" /bin/sleep 0
 }
 
 
