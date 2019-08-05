@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x -e
+# set -x -e
 
 # Globals
 ROOT=/data/picsl/pauly/tau_atlas
@@ -19,11 +19,26 @@ function process_specimen()
     return -1
   fi
 
+  # Get the list of all remote slides
+  FREMOTE=$(mktemp /tmp/svs-to-cloud.XXXXXX)
+  gsutil ls "gs://mtl_histology/${id}/histo_raw/*.*" > $FREMOTE
+
   # Read the relevant slides in the manifest
-  SVSLIST=$(curl -s "$url" 2>&1 | \
+  SVSLIST_FULL=$(curl -s "$url" 2>&1 | \
     grep -v duplicate | \
     grep -v multiple | \
     awk -F, 'NR > 1 {print $1}')
+
+  # Filter the SVS list to only include images that are not already copied
+  SVSLIST=""
+  for f in $SVSLIST_FULL; do
+    if ! grep "histo_raw\/${f}\." $FREMOTE > /dev/null; then
+      SVSLIST="$SVSLIST $f"
+    fi
+  done
+
+  # Progress
+  echo "Specimen ${id}: $(echo $SVSLIST | wc -w) specimens need to be uploaded"
 
   # Launch array tasks
   export SVSLIST id
