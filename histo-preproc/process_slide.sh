@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x -e
 
 id=${1?}
 svs=${2?}
@@ -21,6 +22,19 @@ gsutil cp $svsfile ./data
 if ! svslocal=$(ls ./data/${svs}.*); then
   echo "Download failed for $id $svs $svsfile"
   exit -1
+fi
+
+# Check for levels, and if there is only one level, replace the
+# image with a pyramid one
+LEVELS=$(python process_raw_slide.py -i $svslocal -l)
+if [[ $LEVELS -eq 1 ]]; then
+  mkdir -p ./data/fixflat
+  mv $svslocal ./data/fixflat
+  svsflat=$(ls ./data/fixflat/${svs}.*)
+  vips tiffsave $svsflat $svslocal \
+    --vips-progress --compression=jpeg --Q=80 \
+    --tile --tile-width=256 --tile-height=256 \
+    --pyramid --bigtiff
 fi
 
 # Extract a thumbnail
@@ -46,8 +60,9 @@ c2d $MRILIKE -clip 0 1 -stretch 0 1 1 0 \
   -add -o $TEARFIX
 
 # Check that each of the outputs exists
-OUTPUTS="$SUMMARY $LABELFILE $MIDRES $RESFILE $MRILIKE $TEARFIX"
-for out in $OUTPUTS; do
+REQ_OUTPUTS="$SUMMARY $MIDRES $RESFILE $MRILIKE $TEARFIX"
+ALL_OUTPUTS="$REQ_OUTPUTS $LABELFILE"
+for out in $REQ_OUTPUTS; do
   if [[ ! -f $out ]]; then
     echo "Failed to generate output $out"
     exit -1
@@ -55,7 +70,17 @@ for out in $OUTPUTS; do
 done
 
 # Upload the outputs to the bucket
-if ! gsutil cp $OUTPUTS gs://mtl_histology/$id/histo_proc/${svs}/preproc/ ; then
-  echo "Failed to upload results"
-  exit -1
+for out in $ALL_OUTPUTS; do
+  if ! gsutil cp $out gs://mtl_histology/$id/histo_proc/${svs}/preproc/ ; then
+    echo "Failed to upload results"
+    exit -1
+  fi
+done
+
+# Copy the pyramid image in place of the non-pyramid one
+if [[ $LEVELS -eq 1 ]]; then
+  if ! gsutil cp $svslocal $svsfile; then
+    echo "Failed to upload pyramid tif/svs"
+    exit -1
+  fi
 fi

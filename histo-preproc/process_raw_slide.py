@@ -22,7 +22,11 @@ def process_svs(p):
 
     # Read slide
     slide=openslide.OpenSlide(p['in_img'])
-    print ("Levels: %d" % slide.level_count)
+
+    # If only asking to see the number of levels, do that
+    if p['check_levels'] is True:
+        print(slide.level_count)
+        return
 
     # If we just want summaries, do that
     if len(p['summary']):
@@ -101,9 +105,7 @@ def process_svs(p):
                 oimg[qy:qy+zy,qx:qx+zx]=a[0:zy,0:zx]
 
                 # Print progress
-                sys.stdout.write('\rChunk (%03d,%03d)' % (ix,iy))
-                sys.stdout.flush()
-                
+                print('Chunk (%03d,%03d)' % (ix,iy))
 
 
         # Write the result as a NIFTI file
@@ -141,11 +143,12 @@ def main(argv):
          'out_img' : '', 
          'summary' : '',
          'out_x16' : '',
-         'tile_size' : 100}
+         'tile_size' : 100,
+         'check_levels' : False}
 
     # Read options
     try:
-        opts, args = getopt.getopt(argv, "hi:o:t:s:m:")
+        opts, args = getopt.getopt(argv, "hi:o:t:s:m:l")
     except getopt.GetoptError:
         usage(2)
 
@@ -162,6 +165,9 @@ def main(argv):
             p['out_x16'] = arg
         elif opt == '-t':
             p['tile_size'] = int(arg)
+        elif opt == '-l':
+            p['check_levels'] = True
+
 
     # Run the main code
     process_svs(p)
