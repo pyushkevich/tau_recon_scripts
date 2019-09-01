@@ -71,9 +71,11 @@ done
 
 # Upload the outputs to the bucket
 for out in $ALL_OUTPUTS; do
-  if ! gsutil cp $out gs://mtl_histology/$id/histo_proc/${svs}/preproc/ ; then
-    echo "Failed to upload results"
-    exit -1
+  if [[ -f $out ]]; then
+    if ! gsutil cp $out gs://mtl_histology/$id/histo_proc/${svs}/preproc/ ; then
+      echo "Failed to upload results"
+      exit -1
+    fi
   fi
 done
 
