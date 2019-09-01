@@ -183,6 +183,9 @@ function set_ihc_slice_vars()
   # The location of the RGB thumbnail
   SLIDE_THUMBNAIL=$ROOT/input/histology/slides/$svs/${svs}_thumbnail.tiff
 
+  # The location of the resolution descriptor
+  SLIDE_RAW_RESOLUTION_FILE=$ROOT/input/histology/slides/${svs}/${svs}_resolution.txt
+
   # The location of the slice for manual segmentation (x16)
   SLIDE_NATIVE_X16=$ROOT/input/histology/slides/$svs/${svs}_x16.png
 
@@ -198,9 +201,16 @@ function set_ihc_slice_vars()
   # matrices along with the segmentations
   SLIDE_AFFINE_X16_MATRIX=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.mat
 
+  # Affine matrix that should be applied to the raw slide (in pixels)
+  SLIDE_RAW_AFFINE_MATRIX=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_raw_aff.mat
+
   # Pattern for histology-derived density maps
   SLIDE_DENSITY_MAP_PATTERN=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME}_density_%s.nii.gz
   SLIDE_DENSITY_MAP_THRESH_PATTERN=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME}_density_%s_thresh.nii.gz
+
+  # Google cloud destinations for stuff that goes there
+  GSURL_RECON_BASE=gs://mtl_histology/${id}/histo_proc/${svs}/recon
+  SLIDE_RAW_AFFINE_MATRIX_GSURL=$GSURL_RECON_BASE/${svs}_recon_iter10_affine.mat
 
 }
 
@@ -827,6 +837,125 @@ function recon_histo_all()
   qsub $QSUBOPT -b y -sync y -hold_jid "recon_histo_*" /bin/sleep 0
 }
 
+# ---------------------------------------------------
+# PREPARE matrices for sending to the GCP for display
+# ---------------------------------------------------
+function upload_histo_recon_results()
+{
+  # What specimen and block are we doing this for?
+  read -r id block args <<< "$@"
+
+  # Set the block variables
+  set_block_vars $id $block
+
+  # Create output directory
+  mkdir -p $HISTO_AFFINE_X16_DIR
+
+  # Get the transformation into the viewport space
+  local VP_AFFINE=$TMPDIR/viewport_affine.mat
+  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
+    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
+    > $VP_AFFINE
+
+  # Get the 3D transformation from block space into viewport space
+  local VP_FULL=$TMPDIR/viewport_full.mat
+  c3d_affine_tool \
+    $BF_TO_MRI_AFFINE $BF_TOMOLD_MANUAL_RIGID -mult \
+    $MOLD_RIGID_MAT -inv $VP_AFFINE -mult -mult \
+    -o $VP_FULL
+
+  # Extract the 2D portion of the transformation
+  local VP_FULL_AXIAL=$TMPDIR/viewport_axial.mat
+  cat $VP_FULL | awk '\
+    NR==1 { print $1,$2,0,$4 } \
+    NR==2 { print $1,$2,0,$4 } \
+    NR==3 { print 0,0,1,0 } \
+    NR==4 { print 0,0,0,1 }' > $VP_FULL_AXIAL
+
+  # Get the corresponding rotation
+  local VP_FULL_AXIAL_ROT=$TMPDIR/viewport_axial_rot.mat
+  c3d_affine_tool $VP_FULL_AXIAL -info-full | grep -A 3 "Rotation matrix" \
+    | grep -v "Rotation" > $VP_FULL_AXIAL_ROT
+
+  # Compute the determinant
+  local VP_FULL_AXIAL_ROT_DET=$( \
+    cat $VP_FULL_AXIAL_ROT | awk ' \
+      NR==1 { a = $1; b = $2 } \
+      NR==2 { c = $1; d = $2 } \
+      END { if (a * d - b * c > 0.0) { print 1 } else { print -1 } }')
+
+  # If negative determinant, multiply by x-flip
+  local VP_FULL_AXIAL_ROT_FLIP=$TMPDIR/viewport_axial_rot_flip.mat
+  if [[ $VP_FULL_AXIAL_ROT_DET == "-1" ]]; then
+    cat $VP_FULL_AXIAL_ROT | awk '\
+      NR==1 { print -$1, $2, -$3 }
+      NR>1 { print -$1,$2,$3 } ' > $VP_FULL_AXIAL_ROT_FLIP
+  else
+    cp $VP_FULL_AXIAL_ROT $VP_FULL_AXIAL_ROT_FLIP
+  fi
+
+  # Parse over the histology slices
+  while IFS=, read -r svs stain dummy section slice args; do
+
+    # If the slice number is not specified, fill in missing information and generate warning
+    if [[ ! $slice ]]; then
+      echo "WARNING: missing slice for $svs in histo matching Google sheet"
+      if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
+    fi
+
+    set_ihc_slice_vars $id $block $svs $stain $section $slice $args
+
+    # Get the last affine transform
+    local AFF_TO_MRI=$HISTO_RECON_DIR/vol/iter10/affine_refvol_mov_${svs}_iter10.mat
+    if [[ ! -f $AFF_TO_MRI ]]; then
+      echo "WARNING: missing stack_greedy result for $svs"
+      continue
+    fi
+
+    # Multiply the two matrices. Since we don't have c2d_affine_tool, we have to
+    # do this by hand, which is uggly. 
+    local FN_FULL_MATRIX=$TMPDIR/full.mat
+    cat $AFF_TO_MRI $VP_FULL_AXIAL_ROT_FLIP | awk '\
+      NR==1 { a11=$1; a12=$2; a13=$3 } \
+      NR==2 { a21=$1; a22=$2; a23=$3 } \
+      NR==4 { b11=$1; b12=$2; b13=$3 } \
+      NR==5 { b21=$1; b22=$2; b23=$3 } \
+      END { printf "%f %f %f \n %f %f %f \n 0 0 1 \n", \
+              a11 * b11 + a12 * b21, a11 * b12 + a12 * b22, a11 * b13 + a12 * b23 + a13, \
+              a21 * b11 + a22 * b21, a21 * b12 + a22 * b22, a21 * b13 + a22 * b23 + a23 }' \
+              > $FN_FULL_MATRIX
+
+    # Work out the transformation that will keep the center of the image in the same place
+    # (these are comma-separated dimensions)
+    local RAW_DIMS=($(cat $SLIDE_RAW_RESOLUTION_FILE \
+      | grep dimensions | awk -F'),' '{print $1}' \
+      | awk -F ': ...' '{print $2}' | sed -e "s/,//g"))
+
+    # Get the centers
+    local RAW_CTRS=($(echo ${RAW_DIMS[*]} | awk '{print $1/2.0, $2/2.0}'))
+
+    cat $FN_FULL_MATRIX | awk -v cx=${RAW_CTRS[0]} -v cy=${RAW_CTRS[1]} '\
+        NR==1 {print $1, $2, cx - $1*cx - $2 * cy} \
+        NR==2 {print $1, $2, cy - $1*cx - $2 * cy} \
+        NR==3 {print 0,0,1} ' > $SLIDE_RAW_AFFINE_MATRIX
+
+    # Copy this matrix to its destination
+    gsutil cp $SLIDE_RAW_AFFINE_MATRIX $SLIDE_RAW_AFFINE_MATRIX_GSURL
+
+  done < $HISTO_MATCH_MANIFEST
+}
+
+function upload_histo_recon_results_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+    upload_histo_recon_results $id $block $args
+  done
+}
+
 function recon_for_histo_manseg_all()
 {
   # Read an optional regular expression from command line
@@ -854,6 +983,7 @@ function kube()
 
 function gen_tau_density()
 {
+<<'MUST_REWRITE_THIS'
   # Standard slide parameters accepted
   read -r id block svs stain section slice args <<< "$@"
 
@@ -915,6 +1045,7 @@ function gen_tau_density()
     echo "Failed: no result generated"
     return -1
   fi
+MUST_REWRITE_THIS
 }
 
 # Generate tau density maps for all subjects using GKE

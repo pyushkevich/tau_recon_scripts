@@ -19,7 +19,7 @@ function kube()
 function get_specimen_manifest_slides()
 {
   # What specimen and block are we doing this for?
-  read -r id args <<< "$@"
+  read -r id stain args <<< "$@"
 
   # Match the id in the manifest
   url=$(cat $MDIR/histo_matching.txt | awk -v id=$id '$1 == id {print $2}')
@@ -28,11 +28,17 @@ function get_specimen_manifest_slides()
     return -1
   fi
 
+  # Apply filters
+  local AWKCMD="NR > 1 {print \$1}"
+  if [[ $stain ]]; then
+    AWKCMD="NR > 1 && \$2==\"${stain}\" {print \$1}"
+  fi
+    
   # Read the relevant slides in the manifest
   curl -s "$url" 2>&1 | \
     grep -v duplicate | \
     grep -v multiple | \
-    awk -F, 'NR > 1 {print $1}'
+    awk -F, "$AWKCMD"
 }
 
 # Simple script: go through all of the Google spreadsheets and for each one, 
@@ -161,14 +167,15 @@ function preprocess_specimen_slides()
     BASE="gs://mtl_histology/$id/histo_proc/${svs}/preproc/${svs}_"
 
     # Check if we have to do this
-    for fn in thumbnail.tiff label.tiff x16.png resolution.txt mrilike.nii.gz tearfix.nii.gz; do
+    local must_run=$force
+    for fn in thumbnail.tiff x16.png resolution.txt mrilike.nii.gz tearfix.nii.gz; do
       fn_full=${BASE}${fn}
-      if ! grep "$fn_full" $FREMOTE; then
-        force=1
+      if ! grep "$fn_full" $FREMOTE > /dev/null; then
+        must_run=1
       fi
     done
 
-    if [[ $force ]]; then
+    if [[ $must_run ]]; then
 
       # Get a job ID
       JOB=$(echo $id $svs | md5sum | cut -c 1-6)
@@ -180,7 +187,12 @@ function preprocess_specimen_slides()
         > $YAML
 
       # Run the yaml
+      echo "Scheduling job $id $svs $YAML"
       kube apply -f $YAML
+
+    else
+
+      echo "Skipping $id $svs"
 
     fi
 
@@ -191,6 +203,60 @@ function preprocess_slides_all()
 {
   for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
     preprocess_specimen_slides $id
+  done
+}
+
+# Compute Tau density (or similar map) for all slides in a specimen
+# Inputs are:
+#   id (specimen id)
+#   stain (Tau, NAB, etc)
+#   model (e.g., tangles)
+#   force (if set, clobber existing results)
+function density_map_specimen()
+{
+  read -r id stain model force args <<< "$@"
+
+  # Get the list of slides that are eligible
+  SVSLIST=$(get_specimen_manifest_slides $id $stain)
+
+  # Get a full directory dump
+  FREMOTE=$(mktemp /tmp/dmap-remote-list.XXXXXX)
+  gsutil ls "gs://mtl_histology/$id/histo_proc/**" > $FREMOTE
+
+  # Check for existence of all remote files
+  for svs in $SVSLIST; do
+
+    # Define the outputs
+    BASE="gs://mtl_histology/$id/histo_proc/${svs}"
+    NII="${BASE}/density/${svs}_${stain}_${model}_densitymap.nii.gz"
+    THUMB="${BASE}/preproc/${svs}_thumbnail.tiff"
+
+    # Check that preprocessing has been run for this slide
+    if ! grep "$THUMB" $FREMOTE > /dev/null; then
+      echo "Slide ${svs} has not been preprocessed yet. Skipping"
+      continue
+    fi
+
+    # Check if the result already exists
+    if [[ ! $force ]] && grep "$NII" $FREMOTE > /dev/null; then
+      echo "Result already exists for slide ${svs}. Skipping"
+      continue
+    fi
+
+    # Geberate a job ID and YAML file
+    JOB=$(echo $id $svs $stain $model | md5sum | cut -c 1-6)
+    YAML=/tmp/density_${JOB}.yaml
+
+    # Do YAML substitution
+    cat $ROOT/scripts/yaml/density_map.template.yaml | \
+      sed -e "s/%ID%/${id}/g" -e "s/%JOBID%/${JOB}/g" -e "s/%SVS%/${svs}/g" \
+          -e "s/%STAIN%/${stain}/g" -e "s/%MODEL%/${model}/g" \
+      > $YAML
+
+    # Run the yaml
+    echo "Scheduling job $id $svs $YAML"
+    kube apply -f $YAML
+
   done
 }
 
