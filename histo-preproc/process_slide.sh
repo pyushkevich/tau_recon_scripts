@@ -47,6 +47,13 @@ MIDRES=./data/${svs}_x16.png
 RESFILE=./data/${svs}_resolution.txt
 python process_raw_slide.py -i $svslocal -m $MIDRES > $RESFILE
 
+# Generate a pyramid TIFF file of the x16
+MIDRES_PTIFF=./data/${svs}_x16_pyramid.tiff
+vips tiffsave $MIDRES $MIDRES_PTIFF \
+  --vips-progress --compression=deflate \
+  --tile --tile-width=256 --tile-height=256 \
+  --pyramid --bigtiff
+
 # Get the MRI-like appearance
 MRILIKE=./data/${svs}_mrilike.nii.gz
 TEARFIX=./data/${svs}_tearfix.nii.gz
@@ -60,7 +67,7 @@ c2d $MRILIKE -clip 0 1 -stretch 0 1 1 0 \
   -add -o $TEARFIX
 
 # Check that each of the outputs exists
-REQ_OUTPUTS="$SUMMARY $MIDRES $RESFILE $MRILIKE $TEARFIX"
+REQ_OUTPUTS="$SUMMARY $MIDRES $MIDRES_PTIFF $RESFILE $MRILIKE $TEARFIX"
 ALL_OUTPUTS="$REQ_OUTPUTS $LABELFILE"
 for out in $REQ_OUTPUTS; do
   if [[ ! -f $out ]]; then
