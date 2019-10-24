@@ -3,6 +3,7 @@ kind: Job
 metadata:
   name: hist-torch-job-%JOBID%
 spec:
+  backoffLimit: 2
   template:
     metadata:
       name: my-gpu-pod-torch
@@ -27,3 +28,4 @@ spec:
           - name: GOOGLE_APPLICATION_CREDENTIALS
             value: /var/secrets/google/key.json
       restartPolicy: Never
+      activeDeadlineSeconds: 3600

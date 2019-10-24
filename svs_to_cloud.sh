@@ -238,7 +238,7 @@ function density_map_specimen()
     fi
 
     # Check if the result already exists
-    if [[ ! $force ]] && grep "$NII" $FREMOTE > /dev/null; then
+    if [[ ! $force || $force -eq 0 ]] && grep "$NII" $FREMOTE > /dev/null; then
       echo "Result already exists for slide ${svs}. Skipping"
       continue
     fi
@@ -257,6 +257,14 @@ function density_map_specimen()
     echo "Scheduling job $id $svs $YAML"
     kube apply -f $YAML
 
+  done
+}
+
+function density_map_all()
+{
+  read -r stain model force args <<< "$@"
+  for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
+    density_map_specimen $id ${stain?} ${model?} $force
   done
 }
 

@@ -41,7 +41,7 @@ function set_specimen_vars()
   HIRES_TO_MOLD_AFFINE=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_to_mold_affine.mat
 
   # The mask for the high-resolution MRI
-  HIRES_MRI_REGMASK=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_mask.nii.gz
+  HIRES_MRI_REGMASK_MANUAL=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_mask.nii.gz
 
   # Registration between low-res and high-res MRI
   MRI_WORK_DIR=$ROOT/work/${id}/mri
@@ -56,6 +56,7 @@ function set_specimen_vars()
   MOLD_TO_HIRES_ROOT_WARP=$MRI_WORK_DIR/${id}_mri_rootwarp_fx_hires_mv_mold.nii.gz
   MOLD_TO_HIRES_INV_WARP=$MRI_WORK_DIR/${id}_mri_invwarp_fx_hires_mv_mold.nii.gz
   MOLD_TO_HIRES_WORKSPACE=$MRI_WORK_DIR/${id}_mri_warp_fx_hires_mv_mold.itksnap
+  HIRES_MRI_REGMASK=$MRI_WORK_DIR/${id}_mri_hires_mask.nii.gz
   RESLICE_MOLD_TO_HIRES=$MRI_WORK_DIR/${id}_mri_mold_reslice_to_hires.nii.gz
 
   # Workspaces for mold-blockface preregistration
@@ -64,7 +65,29 @@ function set_specimen_vars()
   MOLD_WORKSPACE_RES=$MANUAL_DIR/bf_to_mold/${id}_mri_bf_to_mold_result.itksnap
 
   # Rotation of the holder around z axis to have the right orientation for viewingw
-  MOLD_REORIENT_VIZ=$MRI_WORK_DIR/${id}_mold_viz.mat
+  MOLD_REORIENT_VIS=$MRI_WORK_DIR/${id}_mold_vis.mat
+  HIRES_MRI_VIS_REFSPACE=$MRI_WORK_DIR/${id}_mri_hires_vis_refspace.nii.gz
+  HIRES_MRI_VIS=$MRI_WORK_DIR/${id}_mri_hires_vis.nii.gz
+
+  # Location of the histology data in the cloud
+  SPECIMEN_HISTO_GCP_ROOT="gs://mtl_histology/${id}/histo_proc"
+  SPECIMEN_HISTO_LOCAL_ROOT="$ROOT/input/${id}/histo_proc"
+
+  # Location where to place splats
+  SPECIMEN_SPLAT_DIR=$ROOT/work/$id/historeg/whole
+}
+
+function set_specimen_density_vars()
+{
+
+  # Read the parameters
+  read -r id stain model args <<< "$@"
+
+  # Splat for the current density in vis space
+  SPECIMEN_DENSITY_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.nii.gz
+
+  # The workspace with that
+  SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.itksnap
 }
 
 # Set common variables for a block
@@ -88,6 +111,13 @@ function set_block_vars()
 
   # Manually generated transform taking block to mold space
   BF_TOMOLD_MANUAL_RIGID=$BF_REG_DIR/${id}_${block}_blockface_tomold_manual_rigid.mat
+
+  # Optional manually generated random forest training file for segmentation of the
+  # block from the background. If absent, the global rf training file will be used
+  BF_CUSTOM_RFTRAIN=$MANUAL_DIR/bf_rftrain/${id}_${block}_rf.dat
+
+  # Global blockface training file
+  BF_GLOBAL_RFTRAIN=$ROOT/manual/common/blockface_rf.dat
 
   # MRI-like image extracted from blockface
   BF_MRILIKE=$BF_REG_DIR/${id}_${block}_blockface_mrilike.nii.gz
@@ -135,6 +165,7 @@ function set_block_vars()
 
   # Data extracted from the histology matching spreadsheets
   HISTO_MATCH_MANIFEST=$HISTO_REG_DIR/match_manifest.txt
+  HISTO_RECON_MANIFEST=$HISTO_REG_DIR/recon_manifest.txt
 
   # Location where stack_greedy is run
   HISTO_RECON_DIR=$HISTO_REG_DIR/recon
@@ -143,8 +174,11 @@ function set_block_vars()
   HISTO_SPLAT_DIR=$HISTO_REG_DIR/splat
 
   # Splatted files
-  HISTO_NISSL_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat_manifest.txt
-  HISTO_NISSL_SPLAT_IMG=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat.nii.gz
+  HISTO_NISSL_RGB_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat_manifest.txt
+  HISTO_NISSL_RGB_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat_%s.nii.gz
+  HISTO_NISSL_MRILIKE_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_mrilike_splat_manifest.txt
+  HISTO_NISSL_MRILIKE_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_mrilike_splat_%s.nii.gz
+  HISTO_NISSL_SPLAT_WORKSPACE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat.itksnap
 
   # Files exported to the segmentation server. These should be stored in a convenient
   # to copy location 
@@ -152,20 +186,31 @@ function set_block_vars()
 
   # Where histology-derived density maps are stored
   HISTO_DENSITY_DIR=$ROOT/work/$id/histomaps/$block
+}
+
+# Set block-level density variables
+function set_block_density_vars()
+{
+  # Read the parameters
+  read -r id block stain model args <<< "$@"
+
+  # Set block variables
+  set_block_vars $id $block
 
   # Splatted densities (patterns)
-  HISTO_DENSITY_SPLAT_MANIFEST_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_%s_rgb_splat_manifest.txt
-  HISTO_DENSITY_SPLAT_IMG_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_%s_rgb_splat.nii.gz
-  HISTO_DENSITY_SPLAT_IMG_TOHIRES_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_%s_rgb_splat_tohires.nii.gz
+  HISTO_DENSITY_BASENAME=$HISTO_SPLAT_DIR/${id}_${block}_density_${stain}_${model}
+  HISTO_DENSITY_SPLAT_MANIFEST=${HISTO_DENSITY_BASENAME}_rgb_splat_manifest.txt
+  HISTO_DENSITY_SPLAT_IMG=${HISTO_DENSITY_BASENAME}_rgb_splat.nii.gz
+  HISTO_DENSITY_SPLAT_IMG_TOHIRES=${HISTO_DENSITY_BASENAME}_rgb_splat_tohires.nii.gz
 
   # Splatted images from which densities are derived
-  HISTO_DENSITY_SRC_SPLAT_MANIFEST_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_src_%s_rgb_splat_manifest.txt
-  HISTO_DENSITY_SRC_SPLAT_IMG_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_density_src_%s_rgb_splat.nii.gz
-
+  HISTO_DENSITY_SRC_BASENAME=$HISTO_SPLAT_DIR/${id}_${block}_densitysrc_${stain}_${model}
+  HISTO_DENSITY_SRC_SPLAT_MANIFEST=${HISTO_DENSITY_SRC_BASENAME}_rgb_splat_manifest.txt
+  HISTO_DENSITY_SRC_SPLAT_IMG=${HISTO_DENSITY_SRC_BASENAME}_rgb_splat.nii.gz
 }
 
 
-# Set variables for a histology slice
+# Set variables for a histology slice. 
 function set_ihc_slice_vars()
 {
   # Read the slice parameters
@@ -174,44 +219,40 @@ function set_ihc_slice_vars()
   # Generate a unique slide id (with all information of this slide)
   SLIDE_ID=$(printf %s_%s_%s_%03d_%02d $id $block $stain $section $slice)
 
-  # The location of the MRI-like slide - generated during import
-  SLIDE_MRILIKE=$ROOT/input/histology/slides/$svs/${svs}_mrilike.nii.gz
+  # Local preproc directory for the slide
+  SLIDE_LOCAL_PREPROC_DIR=$SPECIMEN_HISTO_LOCAL_ROOT/$svs/preproc
+
+  # Local density directory for the slide
+  SLIDE_LOCAL_DENSITY_DIR=$SPECIMEN_HISTO_LOCAL_ROOT/$svs/density
 
   # The location of the tear-fixed slide
-  SLIDE_TEARFIX=$ROOT/input/histology/slides/$svs/${svs}_tearfix.nii.gz
+  SLIDE_TEARFIX=$SLIDE_LOCAL_PREPROC_DIR/${svs}_tearfix.nii.gz
 
   # The location of the RGB thumbnail
-  SLIDE_THUMBNAIL=$ROOT/input/histology/slides/$svs/${svs}_thumbnail.tiff
+  SLIDE_THUMBNAIL=$SLIDE_LOCAL_PREPROC_DIR/${svs}_thumbnail.tiff
 
   # The location of the resolution descriptor
-  SLIDE_RAW_RESOLUTION_FILE=$ROOT/input/histology/slides/${svs}/${svs}_resolution.txt
-
-  # The location of the slice for manual segmentation (x16)
-  SLIDE_NATIVE_X16=$ROOT/input/histology/slides/$svs/${svs}_x16.png
+  SLIDE_RAW_RESOLUTION_FILE=$SLIDE_LOCAL_PREPROC_DIR/${svs}_resolution.txt
 
   # Long name of the slide
   SLIDE_LONG_NAME=$(printf "%s_%s_%02d_%02d_%s" $id $block $section $slice $stain)
 
-  # The location where the modified individual slides go
-  SLIDE_AFFINE_X16=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.png
-  SLIDE_AFFINE_X16_PDF=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.pdf
-
-  # The matrix used to generate this slide. Since we might rerun scripts in the 
-  # interim while the segmentations are being worked on, we should keep these 
-  # matrices along with the segmentations
-  SLIDE_AFFINE_X16_MATRIX=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_x16_aff.mat
-
-  # Affine matrix that should be applied to the raw slide (in pixels)
-  SLIDE_RAW_AFFINE_MATRIX=$HISTO_AFFINE_X16_DIR/${SLIDE_LONG_NAME}_raw_aff.mat
-
-  # Pattern for histology-derived density maps
-  SLIDE_DENSITY_MAP_PATTERN=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME}_density_%s.nii.gz
-  SLIDE_DENSITY_MAP_THRESH_PATTERN=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME}_density_%s_thresh.nii.gz
-
   # Google cloud destinations for stuff that goes there
   GSURL_RECON_BASE=gs://mtl_histology/${id}/histo_proc/${svs}/recon
   SLIDE_RAW_AFFINE_MATRIX_GSURL=$GSURL_RECON_BASE/${svs}_recon_iter10_affine.mat
+}
 
+# Set variables for a particular density map
+function set_ihc_slice_density_vars()
+{
+  # Read the density map parameters
+  read -r svs stain model args <<< "$@"
+
+  # Histology density map (rsynced from cloud)
+  SLIDE_DENSITY_MAP=$SLIDE_LOCAL_DENSITY_DIR/${svs}_${stain}_${model}_densitymap.nii.gz
+
+  # Thresholded density map
+  SLIDE_DENSITY_MAP_THRESH=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME?}_${model}_densitymap_thresh.nii.gz
 }
 
 # Locate the SVS file on histology drive
@@ -400,6 +441,15 @@ function process_mri()
   c3d $MOLD_BINARY $MOLD_CONTOUR -shift -1 -reslice-matrix $MOLD_RIGID_MAT \
     -thresh -inf -1 1 0 -o $MOLD_MRI_MASK_MOLDSPC
 
+  # Generate a mask for the high-res MRI
+  if [[ -f $HIRES_MRI_REGMASK_MANUAL ]]; then
+    # Copy the user's manual mask
+    cp -av $HIRES_MRI_REGMASK_MANUAL $HIRES_MRI_REGMASK
+  else
+    # Create a mask that is all ones
+    c3d $HIRES_MRI -cmv -thresh -inf inf 1 0 -o $HIRES_MRI_REGMASK
+  fi
+
   # Registration with high-resolution image as fixed, low-resolution as moving, lots of smoothness
   greedy -d 3 -i $HIRES_MRI $MOLD_MRI_N4 -it $HIRES_TO_MOLD_AFFINE,-1 \
     -o $MOLD_TO_HIRES_WARP -oroot $MOLD_TO_HIRES_ROOT_WARP \
@@ -453,7 +503,7 @@ function process_mri_all()
   REGEXP=$1
 
   # Process the individual blocks
-  cat $MDIR/specimen.txt | grep "$REGEXP" | while read -r id orient args; do
+  cat $MDIR/moldmri_src.txt | grep "$REGEXP" | while read -r id dir orient args; do
 
     # Submit the jobs
     qsub $QSUBOPT -N "mri_reg_${id}" \
@@ -491,8 +541,19 @@ function register_blockface()
     | awk '$1 == "3>" {print $2,$3,$4,$5}' \
     > $BF_TOMOLD_MANUAL_RIGID
 
-  # Extract the green channel from the blockface image
-  c3d -verbose -mcs $BF_RECON_NII -pop -stretch 0 255 255 0 -o $BF_MRILIKE
+  # Look up the random forest to use for the BF to MRI mapping
+  local RFTRAIN=$BF_CUSTOM_RFTRAIN
+  if [[ ! -f $RFTRAIN ]]; then
+    RFTRAIN=$BF_GLOBAL_RFTRAIN
+  fi
+
+  # Extract the green channel from the blockface image. We generate an MRI-like
+  # image by taking the foreground of the BF computed using random forest and 
+  # multiplying by the inverse green channel which captures gray/white contrast
+  c3d -verbose -mcs $BF_RECON_NII -popas B -popas G -popas R \
+    -push R -push G -push B -rf-param-patch 3x3x1 -rf-apply $RFTRAIN \
+    -stretch 0 1 1 0 \
+    -push G -stretch 0 255 255 0 -times -o $BF_MRILIKE
 
   # Reslice the mold MRI into the space of the blockface image
   greedy -d 3 -rf $BF_MRILIKE \
@@ -564,10 +625,38 @@ function register_blockface_all()
   qsub $QSUBOPT -b y -sync y -hold_jid "reg_bf_*" /bin/sleep 0
 }
 
+
+function rsync_histo_proc()
+{
+  read -r id args <<< "$@"
+
+  set_specimen_vars $id
+
+  # Create some exclusions
+  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*affine\.mat|.*densitymap\.tiff"
+  mkdir -p $SPECIMEN_HISTO_LOCAL_ROOT
+  gsutil rsync -R -x "$EXCL" $SPECIMEN_HISTO_GCP_ROOT/ $SPECIMEN_HISTO_LOCAL_ROOT/
+}
+
+function rsync_histo_all()
+{
+  REGEXP=$1
+
+  cat $MDIR/histo_matching.txt | grep "$REGEXP" | while read -r id args; do
+
+    rsync_histo_proc $id
+
+  done
+}
+  
+
 function recon_histology()
 {
   # What specimen and block are we doing this for?
   read -r id block args <<< "$@"
+
+  # Make sure data is synced. NOTE: this is slowing things down. Run by hand
+  ### rsync_histo_proc $id
 
   # Set the block variables
   set_block_vars $id $block
@@ -588,21 +677,21 @@ function recon_histology()
   # Load the manifest and parse for the block of interest
   curl -s "$url" 2>&1 | \
     grep -v duplicate | \
+    grep -v exclude | \
     grep -v multiple | \
     awk -F, -v b=$block '$3==b {print $0}' \
     > $HISTO_MATCH_MANIFEST
 
   # For each slice in the manifest, determine its z coordinate. This is done by looking 
   # up the slice in the list of all slices going into the blockface image
-  manifest=$TMPDIR/stack_manifest.txt
-  rm -rf $manifest
+  rm -f $HISTO_RECON_MANIFEST
 
   # Additional manifest: for generating RGB NISSL images
-  rm -rf $HISTO_NISSL_SPLAT_MANIFEST
+  rm -f $HISTO_NISSL_RGB_SPLAT_MANIFEST $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
 
   # Another file to keep track of the range of NISSL files
   local NISSL_ZRANGE=$TMPDIR/nissl_zrange.txt
-  rm -rf $NISSL_ZRANGE
+  rm -f $NISSL_ZRANGE
 
   # Whether the block is sectioned anteriorly or posteriorly (this affects how ZPOS
   # is computed.
@@ -626,6 +715,12 @@ function recon_histology()
       continue
     fi
 
+    # Make sure the preprocessing data for this slice exists, if not issue a warning
+    if [[ ! -f $SLIDE_TEARFIX ]]; then
+      echo "WARNING: missing TEARFIX file for $svs"
+      continue
+    fi
+
     # Generate the pattern to search for
     SEARCH_PAT=$(printf "%s_%02d_%02d" $block $section $slice)
 
@@ -645,177 +740,78 @@ function recon_histology()
     fi
 
     # Get the path to the MRI-like histology slide
-    echo $svs $ZPOS $SLIDE_TEARFIX >> $manifest
+    local IS_LEADER=$(echo "$stain" | sed -e "s/NISSL/1/g" -e "s/^[^1].*$/0/")
+    echo $svs $ZPOS $IS_LEADER $SLIDE_TEARFIX >> $HISTO_RECON_MANIFEST
 
     # Add to the nissl manifest
     if [[ $stain == "NISSL" ]]; then
-      echo $svs $SLIDE_THUMBNAIL >> $HISTO_NISSL_SPLAT_MANIFEST
+      echo $svs $SLIDE_THUMBNAIL >> $HISTO_NISSL_RGB_SPLAT_MANIFEST
+      echo $svs $SLIDE_TEARFIX >> $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
       echo $ZPOS >> $NISSL_ZRANGE
     fi
 
   done < $HISTO_MATCH_MANIFEST
 
   # If no manifest generated, return
-  if [[ ! -f $manifest ]]; then
+  if [[ ! -f $HISTO_RECON_MANIFEST ]]; then
     echo "No histology slides found"
     return -1
   fi
 
+  # Must have "leader" NISSL slices
+  if [[ ! -f $NISSL_ZRANGE ]]; then
+    echo "No NISSL slides found"
+    return -1
+  fi
+
   # Run processing with stack_greedy
-  stack_greedy init -M $manifest $HISTO_RECON_DIR
+  stack_greedy init -M $HISTO_RECON_MANIFEST $HISTO_RECON_DIR
 
   stack_greedy -N recon -z 1.6 0.5 \
     -m NCC 8x8 -n 100x40x0x0 -gm-trim 8x8 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy -N volmatch -i $HIRES_MRI_TO_BF_WARPED -gm $HIRES_MRI_MASK_TO_BF_WARPED\
+  stack_greedy -N volmatch -i $HIRES_MRI_TO_BF_WARPED -gm $HIRES_MRI_MASK_TO_BF_WARPED \
     -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
   stack_greedy -N voliter -na 5 -nd 5 -w 4 \
     -m NCC 8x8 -n 100x40x10x0 -s 10.0vox 2.0vox $HISTO_RECON_DIR
 
   # Splat the NISSL slides if they are available
-  if [[ -f $NISSL_ZRANGE ]]; then
+  local nissl_z0=$(cat $NISSL_ZRANGE | sort -n | head -n 1)
+  local nissl_z1=$(cat $NISSL_ZRANGE | sort -n | tail -n 1)
+  local nissl_zstep=0.5
 
-    local nissl_z0=$(cat $NISSL_ZRANGE | sort -n | head -n 1)
-    local nissl_z1=$(cat $NISSL_ZRANGE | sort -n | tail -n 1)
-    local nissl_zstep=0.5
+  # Perform splatting at different stages
+  local SPLAT_STAGES="recon volmatch voliter-05 voliter-10"
+  for STAGE in $SPLAT_STAGES; do
 
-    stack_greedy splat -o $HISTO_NISSL_SPLAT_IMG -i voliter 10 \
+    local OUT="$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE)"
+    stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
       -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
-      -H -M $HISTO_NISSL_SPLAT_MANIFEST -rb 255.0 $HISTO_RECON_DIR
+      -H -M $HISTO_NISSL_RGB_SPLAT_MANIFEST -rb 255.0 $HISTO_RECON_DIR
 
-  fi
-}
+    local OUT="$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE)"
+    stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
+      -H -M $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
 
-# Prepare histology images for manual segmentation.
-function recon_for_histo_manseg()
-{
-  # What specimen and block are we doing this for?
-  read -r id block args <<< "$@"
+  done
 
-  # Set the block variables
-  set_block_vars $id $block
+  # Create an ITK-SNAP workspace
+  itksnap-wt \
+    -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-10)" \
+    -psn "NISSL voliter-10" -props-set-contrast AUTO -props-set-mcd rgb \
+    -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-05)" \
+    -psn "NISSL voliter-05" -props-set-contrast AUTO -props-set-mcd rgb \
+    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-10)" \
+    -psn "MRIlike voliter-10" -props-set-contrast AUTO \
+    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-05)" \
+    -psn "MRIlike voliter-05" -props-set-contrast AUTO \
+    -laa  $HIRES_MRI_TO_BF_WARPED -psn "MRI" -props-set-contrast AUTO \
+    -laa  $BF_MRILIKE -psn "Blockface (MRI-like)" -props-set-contrast AUTO \
+    -o $HISTO_NISSL_SPLAT_WORKSPACE
 
-  # Create output directory
-  mkdir -p $HISTO_AFFINE_X16_DIR
 
-  # Get the transformation into the viewport space
-  local VP_AFFINE=$TMPDIR/viewport_affine.mat
-  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
-    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
-    > $VP_AFFINE
-
-  # Get the 3D transformation from block space into viewport space
-  local VP_FULL=$TMPDIR/viewport_full.mat
-  c3d_affine_tool \
-    $BF_TO_MRI_AFFINE $BF_TOMOLD_MANUAL_RIGID -mult \
-    $MOLD_RIGID_MAT -inv $VP_AFFINE -mult -mult \
-    -o $VP_FULL
-
-  # Extract the 2D portion of the transformation
-  local VP_FULL_AXIAL=$TMPDIR/viewport_axial.mat
-  cat $VP_FULL | awk '\
-    NR==1 { print $1,$2,0,$4 } \
-    NR==2 { print $1,$2,0,$4 } \
-    NR==3 { print 0,0,1,0 } \
-    NR==4 { print 0,0,0,1 }' > $VP_FULL_AXIAL
-
-  # Get the corresponding rotation
-  local VP_FULL_AXIAL_ROT=$TMPDIR/viewport_axial_rot.mat
-  c3d_affine_tool $VP_FULL_AXIAL -info-full | grep -A 3 "Rotation matrix" \
-    | grep -v "Rotation" > $VP_FULL_AXIAL_ROT
-
-  # Compute the determinant
-  local VP_FULL_AXIAL_ROT_DET=$( \
-    cat $VP_FULL_AXIAL_ROT | awk ' \
-      NR==1 { a = $1; b = $2 } \
-      NR==2 { c = $1; d = $2 } \
-      END { if (a * d - b * c > 0.0) { print 1 } else { print -1 } }')
-
-  # If negative determinant, multiply by x-flip
-  local VP_FULL_AXIAL_ROT_FLIP=$TMPDIR/viewport_axial_rot_flip.mat
-  if [[ $VP_FULL_AXIAL_ROT_DET == "-1" ]]; then
-    cat $VP_FULL_AXIAL_ROT | awk '\
-      NR==1 { print -$1, $2, -$3 }
-      NR>1 { print -$1,$2,$3 } ' > $VP_FULL_AXIAL_ROT_FLIP
-  else
-    cp $VP_FULL_AXIAL_ROT $VP_FULL_AXIAL_ROT_FLIP
-  fi
-
-  # The matrix taking ref space to proper viewport
-  local VP_REFMAT=$TMPDIR/viewport_refspc.mat
-
-  # Placeholder for the reference space
-  local REFSPC=
-
-  # Parse over the histology slices
-  while IFS=, read -r svs stain dummy section slice args; do
-
-    # If the slice number is not specified, fill in missing information and generate warning
-    if [[ ! $slice ]]; then
-      echo "WARNING: missing slice for $svs in histo matching Google sheet"
-      if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
-    fi
-
-    set_ihc_slice_vars $id $block $svs $stain $section $slice $args
-
-    # Get the last affine transform
-    local AFF_TO_MRI=$HISTO_RECON_DIR/vol/iter10/affine_refvol_mov_${svs}_iter10.mat
-    if [[ ! -f $AFF_TO_MRI ]]; then
-      echo "WARNING: missing stack_greedy result for $svs"
-      continue
-    fi
-    # Create the reference volume
-    if [[ ! $REFSPC ]]; then
-
-      # Get the actual resolution of the x16 image. This will just be the spacing of the tearfix
-      # image scaled by 16/100 (tile_size is 100 and x16). 
-      local SPC_X16=$(c2d $SLIDE_TEARFIX -info-full \
-        | grep Spacing | sed -e "s/.*\[//" -e "s/\].*//" -e "s/,//g" \
-        | awk '{printf "%fx%fmm\n",$1*.16,$2*.16}')
-
-      # Also get the spacing for the full-resolution X16 images
-      local ORG_X16=$(c2d $SLIDE_TEARFIX -info-full \
-        | grep Spacing | sed -e "s/.*\[//" -e "s/\].*//" -e "s/,//g" \
-        | awk '{printf "%fx%fmm\n",$1*0.5*(.16-1),$2*0.5*(.16-1)}')
-
-      # The reference space is just one of the volume slices, but with new spacing
-      REFSPC=$TMPDIR/refspc.nii.gz
-      c2d $HISTO_RECON_DIR/vol/slides/vol_slide_${svs}.nii.gz -resample-mm $SPC_X16 \
-        -stretch 0 99% 0 255 -clip 0 255 -type uchar -o $REFSPC
-
-      # Work out the rotation that keeps reference space centered
-      local CTRREF=($(c2d $REFSPC -probe 50% | sed -e "s/.*at //" -e "s/ is.*//"))
-      cat $VP_FULL_AXIAL_ROT_FLIP | awk -v cx=${CTRREF[0]} -v cy=${CTRREF[1]} '\
-        NR<=2 {print $1, $2, cx - $1*cx - $2 * cy} \
-        NR==3 {print 0,0,1} ' > $VP_REFMAT
-      cat $VP_REFMAT
-
-    fi
-
-    # Multiply the two matrices. Since we don't have c2d_affine_tool, we have to
-    # do this by hand, which is uggly. 
-    cat $AFF_TO_MRI $VP_REFMAT | awk '\
-      NR==1 { a11=$1; a12=$2; a13=$3 } \
-      NR==2 { a21=$1; a22=$2; a23=$3 } \
-      NR==4 { b11=$1; b12=$2; b13=$3 } \
-      NR==5 { b21=$1; b22=$2; b23=$3 } \
-      END { printf "%f %f %f \n %f %f %f \n 0 0 1 \n", \
-              a11 * b11 + a12 * b21, a11 * b12 + a12 * b22, a11 * b13 + a12 * b23 + a13, \
-              a21 * b11 + a22 * b21, a21 * b12 + a22 * b22, a21 * b13 + a22 * b23 + a23 }' \
-              > $SLIDE_AFFINE_X16_MATRIX
-
-    # Apply the transformation to the slice, but first adjust the spacing and the origin. The 
-    # Spacing of the slice is known, but the origin should be adjusted
-    if [[ -f $SLIDE_NATIVE_X16 ]]; then
-      c2d $REFSPC -popas R -mcs $SLIDE_NATIVE_X16 -foreach \
-        -spacing $SPC_X16 -origin $ORG_X16 -insert R 1 -reslice-matrix $SLIDE_AFFINE_X16_MATRIX \
-        -endfor -type uchar -omc $SLIDE_AFFINE_X16
-    else
-      echo "WARNING: missing file $SLIDE_NATIVE_X16"
-    fi
-
-  done < $HISTO_MATCH_MANIFEST
 }
 
 function recon_histo_all()
@@ -981,137 +977,19 @@ function kube()
   kubectl --server https://kube.itksnap.org --insecure-skip-tls-verify=true "$@"
 }
 
-function gen_tau_density()
-{
-<<'MUST_REWRITE_THIS'
-  # Standard slide parameters accepted
-  read -r id block svs stain section slice args <<< "$@"
-
-  # Get the slide variables
-  set_block_vars $id $block
-  set_ihc_slice_vars $id $block $svs $stain $section $slice $args
-
-  # Get the SVS filename
-  local url=$(get_slide_url $svs)
-
-  # If url exists, copy it to the target machine
-  if [[ ! $url ]]; then
-    echo "ERROR: No URL for slide $svs"
-    return -1
-  fi
-
-  # This is the destination
-  local fn_density=$(printf $SLIDE_DENSITY_MAP_PATTERN "tangles")
-  if [[ -f $fn_density ]]; then
-    echo "Tau density map already exists for $SVS"
-    return
-  fi
-
-  # Just the filename
-  local svsfile=$(basename $url)
-
-  # GSE url
-  local svs_gsurl="gs://svsbucket/$svsfile"
-
-  # Does it already exist?
-  if ! gsutil -q stat $svs_gsurl; then
-    mkdir -p $TMPDIR/svs
-    scp $url $TMPDIR/svs/
-    gsutil cp $TMPDIR/svs/$svsfile $svs_gsurl
-  fi
-  
-  # Modify the yaml
-  cat $ROOT/scripts/tangle-cnn-prod/job.yaml \
-    | sed -e "s/%SVSFILE%/$svsfile/g" -e "s/%SVS%/$svs/g" \
-    > $TMPDIR/myjob.yaml
-
-  # Schedule the job
-  kube apply -f $TMPDIR/myjob.yaml
-
-  # Wait for the job to complete
-  kube wait --for=condition=complete --timeout=2h job/hist-torch-job-${svs}
-
-  # Get the tau density map
-  local res_gsurl="gs://svsbucket/${svs}_tangle_density.nii.gz"
-
-  # Make sure output dir exists
-  mkdir -p $HISTO_DENSITY_DIR
-   
-  if gsutil -q stat $res_gsurl; then
-    gsutil cp $res_gsurl $fn_density
-    # gsutil rm $svs_gsurl
-    # gsutil rm $res_gsurl
-  else
-    echo "Failed: no result generated"
-    return -1
-  fi
-MUST_REWRITE_THIS
-}
-
-# Generate tau density maps for all subjects using GKE
-function gen_tau_density_all()
-{
-  # Read an optional regular expression from command line
-  REGEXP=$1
-
-  # Process the individual blocks
-  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
-
-    set_block_vars $id $block
-
-    # List the individual tau slices known for this block
-    if [[ -f $HISTO_MATCH_MANIFEST ]]; then
-
-      cat $HISTO_MATCH_MANIFEST | sed -e "s/,/ /g" | while read -r svs stain dummy section slice args; do
-
-        if [[ $stain == "Tau" ]]; then
-
-          # Wait for some room in the queue
-          while [[ $(qstat | grep recon_gke | wc -l) -gt 10 ]]; do
-            sleep 1
-          done
-
-          # If the slice number is not specified, fill in missing information and generate warning
-          echo "SLICE=$slice"
-          if [[ ! $slice -gt 0 ]]; then
-            echo "WARNING: missing slice for $svs in histo matching Google sheet"
-            if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
-          fi
-
-          # Submit the job
-          qsub $QSUBOPT -N "recon_gketau_${id}_${block}" \
-            $0 gen_tau_density $id $block $svs $stain $section $slice $args
-
-          # Pause for SSH to catch up
-          ### sleep 120
-
-        fi
-      done
-    fi
-
-  done
-
-  # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "recon_gketau_*" /bin/sleep 0
-}
-
 # Generate the tau splat images
-function splat_tau()
+function splat_density()
 {
   # What specimen and block are we doing this for?
-  read -r id block args <<< "$@"
+  read -r id block stain model args <<< "$@"
 
   # Set the block variables
   set_block_vars $id $block
+  set_block_density_vars $id $block $stain $model
 
   # Generate the splat manifest file
-  local fn_splat_manifest=$(printf $HISTO_DENSITY_SPLAT_MANIFEST_PATTERN "tangles")
-  local fn_splat_img=$(printf $HISTO_DENSITY_SPLAT_IMG_PATTERN "tangles")
-  local fn_splat_src_manifest=$(printf $HISTO_DENSITY_SRC_SPLAT_MANIFEST_PATTERN "tangles")
-  local fn_splat_src_img=$(printf $HISTO_DENSITY_SRC_SPLAT_IMG_PATTERN "tangles")
-  local fn_splat_img_tohires=$(printf $HISTO_DENSITY_SPLAT_IMG_TOHIRES_PATTERN "tangles")
-
-  rm -rf $fn_splat_manifest
+  mkdir -p $HISTO_DENSITY_DIR
+  rm -f $HISTO_DENSITY_SPLAT_MANIFEST
   while IFS=, read -r svs stain dummy section slice args; do
 
     # If the slice number is not specified, fill in missing information and generate warning
@@ -1122,17 +1000,18 @@ function splat_tau()
 
     # Set the variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
+    set_ihc_slice_density_vars $svs $stain $model 
 
     # Does the tangle density exist
-    local fn_density=$(printf $SLIDE_DENSITY_MAP_PATTERN "tangles")
-    if [[ -f $fn_density ]]; then
+    if [[ -f $SLIDE_DENSITY_MAP ]]; then
 
       # Apply post-processing to density map
-      local fn_density_thresh=$(printf $SLIDE_DENSITY_MAP_THRESH_PATTERN "tangles")
-      c2d -mcs $fn_density -scale -1 -add -scale -1 -clip 0 inf -o $fn_density_thresh
+      c2d -mcs $SLIDE_DENSITY_MAP -scale -1 -add -scale -1 -clip 0 inf \
+        -smooth-fast 0.02mm -resample-mm 0.02x0.02mm \
+        -o $SLIDE_DENSITY_MAP_THRESH
 
-      echo $svs $fn_density_thresh >> $fn_splat_manifest
-      echo $svs $SLIDE_THUMBNAIL >> $fn_splat_src_manifest
+      echo $svs $SLIDE_DENSITY_MAP_THRESH >> $HISTO_DENSITY_SPLAT_MANIFEST
+      echo $svs $SLIDE_THUMBNAIL >> $HISTO_DENSITY_SRC_SPLAT_MANIFEST
 
     fi
 
@@ -1143,37 +1022,111 @@ function splat_tau()
   Z1=$(cat $HISTO_RECON_DIR/config/manifest.txt | awk '{print int($2+0.5)}' | sort -n | tail -n 1)
 
   # Splat, with some smoothing to account for voxel size
-  stack_greedy splat -o $fn_splat_img -i voliter 10 -ztol 0.6 -H \
-    -z $Z0 1.0 $Z1 -M $fn_splat_manifest -S exact -rb 0 \
+  stack_greedy splat -o $HISTO_DENSITY_SPLAT_IMG \
+    -i voliter 10 -ztol 0.6 -H \
+    -z $Z0 1.0 $Z1 -M $HISTO_DENSITY_SPLAT_MANIFEST -S exact -rb 0 \
     -si 10 $HISTO_RECON_DIR 
 
   # Splat, with some smoothing to account for voxel size
-  stack_greedy splat -o $fn_splat_src_img -i voliter 10 -ztol 0.6 -H \
-    -z $Z0 1.0 $Z1 -M $fn_splat_src_manifest -S exact -rb 255.0 \
-    -si 10 $HISTO_RECON_DIR 
-
-  # Transform into original MRI space
-  greedy -d 3 -rf $HIRES_MRI -rm $fn_splat_img $fn_splat_img_tohires \
-    -r $BF_TO_HIRES_FULL
+  stack_greedy splat -o $HISTO_DENSITY_SRC_SPLAT_IMG \
+    -i voliter 10 -ztol 0.6 -H \
+    -z $Z0 1.0 $Z1 -M $HISTO_DENSITY_SRC_SPLAT_MANIFEST -S exact -rb 255.0 \
+    $HISTO_RECON_DIR 
 }
 
-function splat_tau_all()
+function splat_density_all()
 {
-  # Read an optional regular expression from command line
-  REGEXP=$1
+  # Read required and optional parameters
+  read -r stain model REGEXP args <<< "$@"
 
   # Process the individual blocks
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
 
     # Submit the jobs
-    qsub $QSUBOPT -N "splat_tau_${id}_${block}" \
+    qsub $QSUBOPT -N "splat_${stain?}_${model?}_${id}_${block}" \
       -l h_vmem=8G -l s_vmem=8G \
-      $0 splat_tau $id $block
+      $0 splat_density $id $block $stain $model
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "splat_tau*" /bin/sleep 0
+  qsub $QSUBOPT -b y -sync y -hold_jid "splat_${stain}_${model}*" /bin/sleep 0
+}
+
+function merge_splat()
+{
+  read -r id stain model args <<< "$@"
+
+  set_specimen_vars $id
+  set_specimen_density_vars $id $stain $model
+
+  # Extract the orientation into visualizable MRI space
+  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
+    | grep '3>' | sed -e "s/3> //" \
+    > $MOLD_REORIENT_VIS
+
+  # Define the target space for final images
+  c3d $MOLD_BINARY $MOLD_MRI_MASK_NATIVESPC \
+    -int 0 -reslice-matrix $MOLD_REORIENT_VIS \
+    -resample-mm 0.2x0.2x0.2mm -trim 20vox -o $HIRES_MRI_VIS_REFSPACE
+  
+  # Send the high-res MRI into the vis space
+  greedy -d 3 \
+    -rf $HIRES_MRI_VIS_REFSPACE -rm $HIRES_MRI $HIRES_MRI_VIS \
+    -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP
+
+  # Collect all the blocks
+  local BLOCKS=$(cat $MDIR/blockface_param.txt | awk -v s=$id '$1==s {print $2}')
+
+  # Register everything into the "nice" MRI space
+  local SPLATMAPS=""
+  for block in $BLOCKS; do
+    set_block_vars $id $block
+    set_block_density_vars $id $block $stain $model
+
+    if [[ -f $HISTO_DENSITY_SPLAT_IMG ]]; then
+
+      local TMPMAP=$TMPDIR/$splat_${id}_${block}_${stain}_${model}.nii.gz
+      greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
+        -rm $HISTO_DENSITY_SPLAT_IMG $TMPMAP \
+        -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $BF_TO_HIRES_FULL
+
+      SPLATMAPS="$SPLATMAPS $TMPMAP"
+    fi
+  done
+
+  # Combine the splat maps
+  mkdir -p $SPECIMEN_SPLAT_DIR
+  if [[ $SPLATMAPS != "" ]]; then
+    c3d $SPLATMAPS -accum -add -endaccum -o $SPECIMEN_DENSITY_SPLAT_VIS
+  fi
+
+  # Create a merged workspace
+  itksnap-wt \
+    -lsm "$HIRES_MRI_VIS_REFSPACE" -psn "9.4T MRI" \
+    -laa "$SPECIMEN_DENSITY_SPLAT_VIS" -psn "${stain} ${model}" \
+    -props-set-colormap "hot" \
+    -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
+}
+
+
+function merge_splat_all()
+{
+  # Read required and optional parameters
+  read -r stain model REGEXP args <<< "$@"
+
+  # Process the individual blocks
+  cat $MDIR/moldmri_src.txt | grep "$REGEXP" | while read -r id args; do
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "merge_${stain?}_${model?}_${id}" \
+      -l h_vmem=8G -l s_vmem=8G \
+      $0 merge_splat $id $stain $model
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "splat_${stain}_${model}*" /bin/sleep 0
 }
 
 

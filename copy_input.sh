@@ -44,7 +44,7 @@ function copy_mold_mri()
 # Organize the high-resolution MRIs - from FlyWheel
 function copy_hires_mri()
 {
-  while read -r ID FWPATH args; do 
+  while IFS=$'\t' read -r ID FWPATH args; do 
 
     # Create the input directory
     IDIR=$ROOT/input/$ID/hires_mri
@@ -54,7 +54,7 @@ function copy_hires_mri()
     pushd $IDIR > /dev/null
 
     # Base filename
-    local FN=$(basename $FWPATH)
+    local FN=$(basename "$FWPATH")
 
     # Check for existing file
     if [[ -f $FN || -f ${FN}.gz ]]; then
@@ -63,7 +63,7 @@ function copy_hires_mri()
     fi
 
     # Copy needed files
-    fw download -o $FN $FWPATH
+    fw download -o $FN "$FWPATH"
 
     # Compress if needed
     if [[ $FN =~ nii$ ]]; then
