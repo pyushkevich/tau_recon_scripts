@@ -20,13 +20,17 @@ def tile_means(img, tile_size):
 # Main function
 def process_svs(p):
 
-    # Read slide
-    slide=openslide.OpenSlide(p['in_img'])
-
     # If only asking to see the number of levels, do that
     if p['check_levels'] is True:
-        print(slide.level_count)
+        try:
+            slide=openslide.OpenSlide(p['in_img'])
+            print(slide.level_count)
+        except:
+            print(-1)
         return
+
+    # Read the slide first
+    slide=openslide.OpenSlide(p['in_img'])
 
     # If we just want summaries, do that
     if len(p['summary']):
