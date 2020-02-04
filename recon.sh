@@ -121,6 +121,8 @@ function set_block_vars()
 
   # MRI-like image extracted from blockface
   BF_MRILIKE=$BF_REG_DIR/${id}_${block}_blockface_mrilike.nii.gz
+  BF_ICEMASK=$BF_REG_DIR/${id}_${block}_blockface_icemask.nii.gz
+  BF_MRILIKE_UNMASKED=$BF_REG_DIR/${id}_${block}_blockface_mrilike_unmasked.nii.gz
 
   # MRI crudely mapped to block space
   MRI_TO_BF_INIT=$BF_REG_DIR/${id}_${block}_mri_toblock_init.nii.gz
@@ -179,6 +181,10 @@ function set_block_vars()
   HISTO_NISSL_MRILIKE_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_mrilike_splat_manifest.txt
   HISTO_NISSL_MRILIKE_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_mrilike_splat_%s.nii.gz
   HISTO_NISSL_SPLAT_WORKSPACE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat.itksnap
+
+  # Reference images for the splatting
+  HISTO_NISSL_SPLAT_BF_MRILIKE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_splat_bf_mrilike.nii.gz
+  HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES=$HISTO_SPLAT_DIR/${id}_${block}_nissl_splat_bf_mrilike_edges.nii.gz
 
   # Files exported to the segmentation server. These should be stored in a convenient
   # to copy location 
@@ -453,7 +459,7 @@ function process_mri()
   # Registration with high-resolution image as fixed, low-resolution as moving, lots of smoothness
   greedy -d 3 -i $HIRES_MRI $MOLD_MRI_N4 -it $HIRES_TO_MOLD_AFFINE,-1 \
     -o $MOLD_TO_HIRES_WARP -oroot $MOLD_TO_HIRES_ROOT_WARP \
-    -sv -s 3mm 0.2mm -m NCC 8x8x8 -n 40x40x0 -gm $HIRES_MRI_REGMASK \
+    -sv -s 3mm 0.2mm -m NCC 8x8x8 -n 100x100x100x40 -gm $HIRES_MRI_REGMASK \
     -wp 0.0001 -exp 6 
 
   # Apply the registration
@@ -552,8 +558,9 @@ function register_blockface()
   # multiplying by the inverse green channel which captures gray/white contrast
   c3d -verbose -mcs $BF_RECON_NII -popas B -popas G -popas R \
     -push R -push G -push B -rf-param-patch 3x3x1 -rf-apply $RFTRAIN \
-    -stretch 0 1 1 0 \
-    -push G -stretch 0 255 255 0 -times -o $BF_MRILIKE
+    -stretch 0 1 1 0 -o $BF_ICEMASK \
+    -push G -stretch 0 255 255 0 -o $BF_MRILIKE_UNMASKED \
+    -times -o $BF_MRILIKE
 
   # Reslice the mold MRI into the space of the blockface image
   greedy -d 3 -rf $BF_MRILIKE \
@@ -767,14 +774,17 @@ function recon_histology()
   # Run processing with stack_greedy
   stack_greedy init -M $HISTO_RECON_MANIFEST $HISTO_RECON_DIR
 
-  stack_greedy -N recon -z 1.6 0.5 \
+  # Jan 2020: the zeps=4 value seems to work better for the NCC metric, the
+  # previously used value of 0.5 ended up having lots of slices skipped. But
+  # need to doublecheck that this does not hurt other registrations
+  stack_greedy -N recon -z 1.6 4.0 \
     -m NCC 8x8 -n 100x40x0x0 -gm-trim 8x8 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy -N volmatch -i $HIRES_MRI_TO_BF_WARPED -gm $HIRES_MRI_MASK_TO_BF_WARPED \
-    -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
+  stack_greedy -N volmatch -i $BF_MRILIKE \
+    -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy -N voliter -na 5 -nd 5 -w 4 \
-    -m NCC 8x8 -n 100x40x10x0 -s 10.0vox 2.0vox $HISTO_RECON_DIR
+  stack_greedy -N voliter -na 20 -nd 10 -w 0.5 -wdp \
+    -m NCC 8x8 -n 100x40x10 -s 3.0mm 0.5mm -sv $HISTO_RECON_DIR
 
   # Splat the NISSL slides if they are available
   local nissl_z0=$(cat $NISSL_ZRANGE | sort -n | head -n 1)
@@ -782,7 +792,7 @@ function recon_histology()
   local nissl_zstep=0.5
 
   # Perform splatting at different stages
-  local SPLAT_STAGES="recon volmatch voliter-05 voliter-10"
+  local SPLAT_STAGES="recon volmatch voliter-20 voliter-30"
   for STAGE in $SPLAT_STAGES; do
 
     local OUT="$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE)"
@@ -797,18 +807,27 @@ function recon_histology()
 
   done
 
+  # Create a blockface reference image that has the same dimensions as the
+  # splatted images. This will be used to extract edges
+  c3d $(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN volmatch) \
+    $BF_MRILIKE -int 0 -reslice-identity -o $HISTO_NISSL_SPLAT_BF_MRILIKE \
+    -as X -slice z 0:-1 -foreach -canny 0.4x0.4x0.0mm 0.2 0.2 -endfor -tile z \
+    -insert X 1 -copy-transform -o $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES
+
   # Create an ITK-SNAP workspace
   itksnap-wt \
-    -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-10)" \
-    -psn "NISSL voliter-10" -props-set-contrast AUTO -props-set-mcd rgb \
-    -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-05)" \
-    -psn "NISSL voliter-05" -props-set-contrast AUTO -props-set-mcd rgb \
-    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-10)" \
-    -psn "MRIlike voliter-10" -props-set-contrast AUTO \
-    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-05)" \
-    -psn "MRIlike voliter-05" -props-set-contrast AUTO \
-    -laa  $HIRES_MRI_TO_BF_WARPED -psn "MRI" -props-set-contrast AUTO \
-    -laa  $BF_MRILIKE -psn "Blockface (MRI-like)" -props-set-contrast AUTO \
+    -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-30)" \
+    -psn "NISSL voliter-30" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+    -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)" \
+    -psn "NISSL voliter-20" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-30)" \
+    -psn "MRIlike voliter-30" -props-set-contrast LINEAR 0 0.2 \
+    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-20)" \
+    -psn "MRIlike voliter-20" -props-set-contrast LINEAR 0 0.2 \
+    -laa $HIRES_MRI_TO_BF_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
+    -laa $HISTO_NISSL_SPLAT_BF_MRILIKE -psn "Blockface (MRI-like)" -props-set-contrast LINEAR 0.5 1.0 \
+    -laa $BF_RECON_NII -psn "Blockface" -props-set-contrast LINEAR 0.0 0.5 -props-set-mcd rgb \
+    -las $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES \
     -o $HISTO_NISSL_SPLAT_WORKSPACE
 
 
