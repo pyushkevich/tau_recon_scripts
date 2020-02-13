@@ -75,6 +75,15 @@ function set_specimen_vars()
 
   # Location where to place splats
   SPECIMEN_SPLAT_DIR=$ROOT/work/$id/historeg/whole
+
+  # Manual tracings on high-resolution MRI for registration validation (Sydney)
+  HIRES_MRI_MANUAL_TRACE=$ROOT/manual/$id/reg_eval/${id}_MRI_val_seg.nii.gz
+
+  # Matrix used to manually rotate the high-res MRI into mold space (Sydney)
+  HIRES_MRI_MANUAL_TRACE_AFFINE=$ROOT/manual/$id/reg_eval/${id}_mri_hires_to_mold_affine_fix.mat
+
+  # Location of registration validation tracings for histology
+  SPECIMEN_HISTO_REGVAL_ROOT=$ROOT/manual/$id/reg_eval/svg
 }
 
 function set_specimen_density_vars()
@@ -142,6 +151,9 @@ function set_block_vars()
   HIRES_MRI_TO_BF_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_toblock_warped.nii.gz
   HIRES_MRI_MASK_TO_BF_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_mask_toblock_warped.nii.gz
 
+  # Registration validation tracings mapped to blockface space
+  HIRES_MRI_MANUAL_TRACE_TO_BF_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_toblock_valseg_warped.nii.gz
+
   # Rotation matrix to make the block properly oriented for human viewing
   BF_REORIENT_VIZ=$BF_REG_DIR/${id}_${block}_blockface_reorient_2d.mat
 
@@ -192,6 +204,10 @@ function set_block_vars()
 
   # Where histology-derived density maps are stored
   HISTO_DENSITY_DIR=$ROOT/work/$id/histomaps/$block
+
+  # Manifest file for registration validation splatting
+  HISTO_NISSL_REGEVAL_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_regeval_splat_manifest.txt
+  HISTO_NISSL_REGEVAL_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_regeval_splat_%s.nii.gz
 }
 
 # Set block-level density variables
@@ -208,6 +224,10 @@ function set_block_density_vars()
   HISTO_DENSITY_SPLAT_MANIFEST=${HISTO_DENSITY_BASENAME}_rgb_splat_manifest.txt
   HISTO_DENSITY_SPLAT_IMG=${HISTO_DENSITY_BASENAME}_rgb_splat.nii.gz
   HISTO_DENSITY_SPLAT_IMG_TOHIRES=${HISTO_DENSITY_BASENAME}_rgb_splat_tohires.nii.gz
+
+  # Splatted registration validation curves
+  HISTO_DENSITY_REGEVAL_SPLAT_MANIFEST=${HISTO_DENSITY_BASENAME}_regeval_splat_manifest.txt
+  HISTO_DENSITY_REGEVAL_SPLAT_IMG=${HISTO_DENSITY_BASENAME}_regeval_splat.nii.gz
 
   # Splatted images from which densities are derived
   HISTO_DENSITY_SRC_BASENAME=$HISTO_SPLAT_DIR/${id}_${block}_densitysrc_${stain}_${model}
@@ -602,6 +622,17 @@ function register_blockface()
     -ri NN -rm $HIRES_MRI_REGMASK $HIRES_MRI_MASK_TO_BF_WARPED \
     -r $HIRES_TO_BF_WARP_FULL
 
+  # If validation tracings exist in MRI space, map them to the blockface space
+  # for evaluation purposes. 
+  if [[ -f $HIRES_MRI_MANUAL_TRACE ]]; then
+
+    greedy -d 3 -rf $BF_MRILIKE \
+      -ri LABEL 0.1mm \
+      -rm $HIRES_MRI_MANUAL_TRACE $HIRES_MRI_MANUAL_TRACE_TO_BF_WARPED \
+      -r $HIRES_TO_BF_WARP_FULL $HIRES_MRI_MANUAL_TRACE_AFFINE,-1
+
+  fi
+
   # Create a workspace native to the blockface image
   itksnap-wt \
     -laa $BF_RECON_NII -psn "Blockface" \
@@ -695,6 +726,7 @@ function recon_histology()
 
   # Additional manifest: for generating RGB NISSL images
   rm -f $HISTO_NISSL_RGB_SPLAT_MANIFEST $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
+  rm -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
 
   # Another file to keep track of the range of NISSL files
   local NISSL_ZRANGE=$TMPDIR/nissl_zrange.txt
@@ -755,6 +787,12 @@ function recon_histology()
       echo $svs $SLIDE_THUMBNAIL >> $HISTO_NISSL_RGB_SPLAT_MANIFEST
       echo $svs $SLIDE_TEARFIX >> $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
       echo $ZPOS >> $NISSL_ZRANGE
+
+      # Check if there is a registration validation tracing for this slide
+      svs_regval=$(find $SPECIMEN_HISTO_REGVAL_ROOT -name "*__${svs}.png")
+      if [[ $svs_regval && -f $svs_regval ]]; then
+        echo $svs $svs_regval >> $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
+      fi
     fi
 
   done < $HISTO_MATCH_MANIFEST
@@ -804,6 +842,13 @@ function recon_histology()
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
       -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+
+    if [[ -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST ]]; then
+      local OUT="$(printf $HISTO_NISSL_REGEVAL_SPLAT_PATTERN $STAGE)"
+      stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
+        -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
+        -H -M $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+    fi
 
   done
 
@@ -1008,8 +1053,11 @@ function splat_density()
 
   # Generate the splat manifest file
   mkdir -p $HISTO_DENSITY_DIR
-  rm -f $HISTO_DENSITY_SPLAT_MANIFEST
-  while IFS=, read -r svs stain dummy section slice args; do
+  rm -f $HISTO_DENSITY_SPLAT_MANIFEST $HISTO_DENSITY_REGEVAL_SPLAT_MANIFEST
+  while IFS=, read -r svs slide_stain dummy section slice args; do
+
+    # Stain has to match
+    if [[ $slide_stain != $stain ]]; then continue; fi
 
     # If the slice number is not specified, fill in missing information and generate warning
     if [[ ! $slice ]]; then
@@ -1034,6 +1082,13 @@ function splat_density()
 
     fi
 
+    # Does the registration validation exist
+    svs_regval=$(find $SPECIMEN_HISTO_REGVAL_ROOT -name "*__${svs}.png")
+    if [[ $svs_regval && -f $svs_regval ]]; then
+      echo $svs $svs_regval >> $HISTO_DENSITY_REGEVAL_SPLAT_MANIFEST
+    fi
+    
+
   done < $HISTO_MATCH_MANIFEST
 
   # Get the z-range
@@ -1042,15 +1097,25 @@ function splat_density()
 
   # Splat, with some smoothing to account for voxel size
   stack_greedy splat -o $HISTO_DENSITY_SPLAT_IMG \
-    -i voliter 10 -ztol 0.6 -H \
+    -i voliter 30 -ztol 0.6 -H \
     -z $Z0 1.0 $Z1 -M $HISTO_DENSITY_SPLAT_MANIFEST -S exact -rb 0 \
     -si 10 $HISTO_RECON_DIR 
 
   # Splat, with some smoothing to account for voxel size
   stack_greedy splat -o $HISTO_DENSITY_SRC_SPLAT_IMG \
-    -i voliter 10 -ztol 0.6 -H \
+    -i voliter 30 -ztol 0.6 -H \
     -z $Z0 1.0 $Z1 -M $HISTO_DENSITY_SRC_SPLAT_MANIFEST -S exact -rb 255.0 \
     $HISTO_RECON_DIR 
+
+  # Registration evaluation
+  if [[ -f $HISTO_DENSITY_REGEVAL_SPLAT_MANIFEST ]]; then
+
+    stack_greedy splat -o $HISTO_DENSITY_REGEVAL_SPLAT_IMG \
+      -i voliter 30 -ztol 0.6 -H \
+      -z $Z0 1.0 $Z1 -M $HISTO_DENSITY_REGEVAL_SPLAT_MANIFEST -S exact -rb 255.0 \
+      $HISTO_RECON_DIR 
+
+  fi
 }
 
 function splat_density_all()
