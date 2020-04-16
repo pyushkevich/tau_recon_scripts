@@ -160,46 +160,64 @@ function set_block_vars()
   BF_ICEMASK=$BF_REG_DIR/${id}_${block}_blockface_icemask.nii.gz
   BF_MRILIKE_UNMASKED=$BF_REG_DIR/${id}_${block}_blockface_mrilike_unmasked.nii.gz
 
-  # MRI crudely mapped to block space
-  MRI_TO_BF_INIT=$BF_REG_DIR/${id}_${block}_mri_toblock_init.nii.gz
-  MRI_TO_BF_INIT_MASK=$BF_REG_DIR/${id}_${block}_mri_toblock_init_mask.nii.gz
+  # The matrix that rotates this block in an anatomically proper orientation
+  # as specified by the user
+  BF_TO_BFVIS_RIGID=$BF_REG_DIR/${id}_${block}_blockface_to_bfvis_rigid.mat
+
+  # Blockface reference space for NISSL. This image is rotated in an anatomically
+  # pleasant way, and has the spacing of 500um, matching the NISSL spacing. This is
+  # used as the initial reference space for histology registration
+  BFVIS_REFSPACE=$BF_REG_DIR/${id}_${block}_bfvis_refspace.nii.gz
+
+  # The rotated blockface RGB image, used mainly for visualization
+  BFVIS_RGB=$BF_REG_DIR/${id}_${block}_bfvis_blockface.nii.gz
+
+  # Derived images in BFVIS space
+  BFVIS_MRILIKE=$BF_REG_DIR/${id}_${block}_bfvis_mrilike.nii.gz
+  BFVIS_ICEMASK=$BF_REG_DIR/${id}_${block}_bfvis_icemask.nii.gz
+
+  # MRI crudely mapped to BFVIS space
+  MRI_TO_BFVIS_INIT=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_init.nii.gz
+  MRI_TO_BFVIS_INIT_MASK=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_init_mask.nii.gz
 
   # Matrix to initialize rigid
-  BF_TO_MRI_RIGID=$BF_REG_DIR/${id}_${block}_rigid_invgreen.mat
-  BF_TO_MRI_AFFINE=$BF_REG_DIR/${id}_${block}_affine_invgreen.mat
-  BF_TO_MRI_WORKSPACE=$BF_REG_DIR/${id}_${block}_bf_to_mri_affinereg.itksnap
+  BFVIS_TO_MRI_RIGID=$BF_REG_DIR/${id}_${block}_bfvis_to_mri_rigid.mat
+  BFVIS_TO_MRI_AFFINE=$BF_REG_DIR/${id}_${block}_bfvis_to_mri_affine.mat
+  BFVIS_TO_MRI_WORKSPACE=$BF_REG_DIR/${id}_${block}_bfvis_to_mri_affine.itksnap
 
   # Affine resliced MRI matched to the blockface
-  MRI_TO_BF_AFFINE=$BF_REG_DIR/${id}_${block}_mri_toblock_affine.nii.gz
-  MRI_TO_BF_AFFINE_MASK=$BF_REG_DIR/${id}_${block}_mri_toblock_affine_mask.nii.gz
+  MRI_TO_BFVIS_AFFINE=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_affine.nii.gz
+  MRI_TO_BFVIS_AFFINE_MASK=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_affine_mask.nii.gz
 
   # Hires MRI resampled to block
-  HIRES_MRI_TO_BF_AFFINE=$BF_REG_DIR/${id}_${block}_hires_mri_toblock_affine.nii.gz
-  HIRES_MRI_TO_BF_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_toblock_warped.nii.gz
-  HIRES_MRI_MASK_TO_BF_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_mask_toblock_warped.nii.gz
+  HIRES_MRI_TO_BFVIS_AFFINE=$BF_REG_DIR/${id}_${block}_hires_mri_to_bfvis_affine.nii.gz
+  HIRES_MRI_TO_BFVIS_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_to_bfvis_warped.nii.gz
+  HIRES_MRI_MASK_TO_BFVIS_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_mask_to_bfvis_warped.nii.gz
 
   # Registration validation tracings mapped to blockface space
-  HIRES_MRI_MANUAL_TRACE_TO_BF_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_toblock_valseg_warped.nii.gz
+  HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_to_bfvis_valseg_warped.nii.gz
 
-  # Rotation matrix to make the block properly oriented for human viewing
-  BF_REORIENT_VIZ=$BF_REG_DIR/${id}_${block}_blockface_reorient_2d.mat
+  # Sequence of transforms to take MOLD MRI to BF reference space
+  MRI_TO_BFVIS_AFFINE_FULL="$BFVIS_TO_MRI_AFFINE,-1 \
+                            $BF_TO_BFVIS_RIGID \
+                            $BF_TOMOLD_MANUAL_RIGID,-1 \
+                            $MOLD_RIGID_MAT"
 
-  # Intensity remapped histology block
-  BF_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_reoriented.nii.gz
-  BF_MRILIKE_REORIENTED=$BF_REG_DIR/${id}_${block}_blockface_tomold_invgreen_reoriented.nii.gz
+  # Sequence of transforms to take high-resolution MRI to BF reference space
+  HIRES_TO_BFVIS_AFFINE_FULL="$MRI_TO_BFVIS_AFFINE_FULL $HIRES_TO_MOLD_AFFINE"
+  HIRES_TO_BFVIS_WARP_FULL="$HIRES_TO_BFVIS_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
 
-  # Sequence of transforms to take MOLD MRI to native space
-  MRI_TO_BF_AFFINE_FULL="$BF_TO_MRI_AFFINE,-1 $BF_TOMOLD_MANUAL_RIGID,-1 $MOLD_RIGID_MAT"
-  HIRES_TO_BF_AFFINE_FULL="$MRI_TO_BF_AFFINE_FULL $HIRES_TO_MOLD_AFFINE"
-  HIRES_TO_BF_WARP_FULL="$HIRES_TO_BF_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
+  # Inverse of the above transforms
+  BFVIS_TO_MRI_AFFINE_FULL="$MOLD_RIGID_MAT,-1 \
+                         $BF_TOMOLD_MANUAL_RIGID \
+                         $BF_TO_BFVIS_RIGID,-1 \
+                         $BFVIS_TO_MRI_AFFINE"
 
-  # Transforms to take blockface space to hires MRI space 
-  BF_TO_MRI_AFFINE_FULL="$MOLD_RIGID_MAT,-1 $BF_TOMOLD_MANUAL_RIGID $BF_TO_MRI_AFFINE"
-  BF_TO_HIRES_AFFINE_FULL="$HIRES_TO_MOLD_AFFINE,-1 $BF_TO_MRI_AFFINE_FULL"
-  BF_TO_HIRES_FULL="$MOLD_TO_HIRES_WARP $BF_TO_HIRES_AFFINE_FULL"
+  BFVIS_TO_HIRES_AFFINE_FULL="$HIRES_TO_MOLD_AFFINE,-1 $BFVIS_TO_MRI_AFFINE_FULL"
+  BFVIS_TO_HIRES_FULL="$MOLD_TO_HIRES_WARP $BFVIS_TO_HIRES_AFFINE_FULL"
 
   # Workspace of MRI in BF space
-  MRI_TO_BF_WORKSPACE=$BF_REG_DIR/${id}_${block}_mri_to_bf.itksnap
+  MRI_TO_BFVIS_WORKSPACE=$BF_REG_DIR/${id}_${block}_mri_to_bfvis.itksnap
 
   # Location where stack_greedy is run
   HISTO_REG_DIR=$ROOT/work/$id/historeg/$block
@@ -715,6 +733,7 @@ function process_mri_all()
 }
 
 
+
 function register_blockface()
 {
   # Read all the arguments
@@ -734,11 +753,6 @@ function register_blockface()
     exit
   fi
 
-  # Extract the transformation that maps the blockface into the mold space
-  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt ${block} -props-get-transform \
-    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
-    > $BF_TOMOLD_MANUAL_RIGID
-
   # Look up the random forest to use for the BF to MRI mapping
   local RFTRAIN=$BF_CUSTOM_RFTRAIN
   if [[ ! -f $RFTRAIN ]]; then
@@ -746,74 +760,126 @@ function register_blockface()
   fi
 
   # Extract the green channel from the blockface image. We generate an MRI-like
-  # image by taking the foreground of the BF computed using random forest and 
+  # image by taking the foreground of the BF computed using random forest and
   # multiplying by the inverse green channel which captures gray/white contrast
   c3d -verbose -mcs $BF_RECON_NII -popas B -popas G -popas R \
     -push R -push G -push B -rf-param-patch 3x3x1 -rf-apply $RFTRAIN \
-    -stretch 0 1 1 0 -o $BF_ICEMASK \
+    -pop -o $BF_ICEMASK \
     -push G -stretch 0 255 255 0 -o $BF_MRILIKE_UNMASKED \
     -times -o $BF_MRILIKE
 
+  # Extract the transformation that maps the blockface into the mold space
+  echo $BF_TOMOLD_MANUAL_RIGID
+  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt ${block} -props-get-transform \
+    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
+    > $BF_TOMOLD_MANUAL_RIGID
+
+  # Extract the 2D transformation that properly orients the mold for visualization
+  local VP_AFFINE=$TMPDIR/vp_affine.mat
+  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
+    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
+    > $VP_AFFINE
+
+  # Get the 3D transformation from block space into viewport space
+  local VP_FULL=$TMPDIR/vp_full.mat
+  c3d_affine_tool \
+    $BF_TOMOLD_MANUAL_RIGID \
+    $MOLD_RIGID_MAT -inv $VP_AFFINE -mult -mult \
+    -o $VP_FULL
+
+  # Obtain the center of the blockface image
+  local CX CY CZ
+  read -r CX CY CZ <<< "$(c3d $BF_MRILIKE -probe 50% | awk '{print $5,$6,$7}')"
+
+  # Extract the 2D portion of the transformation and make it preserve the
+  # center of the blockface image
+  echo $BF_TO_BFVIS_RIGID
+  cat $VP_FULL | awk -v cx=$CX -v cy=$CY -v cz=$CZ '\
+    NR==1 { print $1,$2,0,cx - $1*cx - $2*cy } \
+    NR==2 { print $1,$2,0,cy - $1*cx - $2*cy } \
+    NR==3 { print 0,0,1,0 } \
+    NR==4 { print 0,0,0,1 }' > $BF_TO_BFVIS_RIGID
+
+  # Generate a reference space for this block. It will have a visually pleasing
+  # orientation, fit tightly to the BF mask, and have the resolution of the BF. It
+  # will have z-spacing matching that of NISSL so that the reference image is not
+  # too huge in size.
+  c3d -verbose $BF_ICEMASK \
+    -thresh 0.5 inf 1 0 -dilate 0 7x7x7 -dilate 1 7x7x7 \
+    -comp -thresh 1 1 1 0 \
+    -pad 50%x50%x0 50%x50%x0 0 \
+    -dup -int 0 -reslice-matrix $BF_TO_BFVIS_RIGID \
+     -trim 2x2x0mm -o $BFVIS_REFSPACE
+
+
+  # Reslice the relevant images to this reference space
+  greedy -d 3 -rf $BF_ICEMASK \
+    -rm $BF_MRILIKE $BFVIS_MRILIKE \
+    -rm $BF_ICEMASK $BFVIS_ICEMASK \
+    -rb 255 -rm $BF_RECON_NII $BFVIS_RGB \
+    -r $BF_TO_BFVIS_RIGID
+
+
   # Reslice the mold MRI into the space of the blockface image
-  greedy -d 3 -rf $BF_MRILIKE \
-    -rm $MOLD_MRI_N4 $MRI_TO_BF_INIT \
-    -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BF_INIT_MASK \
-    -r $BF_TOMOLD_MANUAL_RIGID,-1 $MOLD_RIGID_MAT
+  greedy -d 3 -rf $BFVIS_MRILIKE \
+    -rm $MOLD_MRI_N4 $MRI_TO_BFVIS_INIT \
+    -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BFVIS_INIT_MASK \
+    -r $BF_TO_BFVIS_RIGID $BF_TOMOLD_MANUAL_RIGID,-1 $MOLD_RIGID_MAT
 
   # Perform the rigid, then affine registration
-  greedy -d 3 -a -dof 6 -i $MRI_TO_BF_INIT $BF_MRILIKE \
-    -gm $MRI_TO_BF_INIT_MASK -o $BF_TO_MRI_RIGID \
+  greedy -d 3 -a -dof 6 -i $MRI_TO_BFVIS_INIT $BFVIS_MRILIKE \
+    -gm $MRI_TO_BFVIS_INIT_MASK -o $BFVIS_TO_MRI_RIGID \
     -m NCC 4x4x4 -n 60x40x0 -ia-identity
 
-  greedy -d 3 -a -dof 12 -i $MRI_TO_BF_INIT $BF_MRILIKE \
-    -gm $MRI_TO_BF_INIT_MASK -o $BF_TO_MRI_AFFINE \
-    -m NCC 4x4x4 -n 60x40x0 -ia $BF_TO_MRI_RIGID
+  greedy -d 3 -a -dof 12 -i $MRI_TO_BFVIS_INIT $BFVIS_MRILIKE \
+    -gm $MRI_TO_BFVIS_INIT_MASK -o $BFVIS_TO_MRI_AFFINE \
+    -m NCC 4x4x4 -n 60x40x0 -ia $BFVIS_TO_MRI_RIGID
 
   # Save a workspace with the registration result
   itksnap-wt \
-    -laa $MRI_TO_BF_INIT -psn "MRI" -las $MRI_TO_BF_INIT_MASK \
-    -laa $BF_MRILIKE -psn "BF_MRILIKE_NOREG" \
-    -laa $BF_MRILIKE -psn "BF_MRILIKE" -props-set-transform $BF_TO_MRI_AFFINE \
-    -laa $BF_RECON_NII -psn "BF" -props-set-transform $BF_TO_MRI_AFFINE -props-set-mcd RGB \
-    -o $BF_TO_MRI_WORKSPACE
+    -laa $MRI_TO_BFVIS_INIT -psn "MRI" -las $MRI_TO_BFVIS_INIT_MASK \
+    -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE_NOREG" \
+    -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE" -props-set-transform $BFVIS_TO_MRI_AFFINE \
+    -laa $BFVIS_RGB -psn "BFVIS_RGB" -props-set-transform $BFVIS_TO_MRI_AFFINE -props-set-mcd RGB \
+    -o $BFVIS_TO_MRI_WORKSPACE
 
   # Reslice the MRI into block space using the affine registration result
-  greedy -d 3 -rf $BF_MRILIKE \
-    -rm $MOLD_MRI_N4 $MRI_TO_BF_AFFINE \
-    -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BF_AFFINE_MASK \
-    -r $MRI_TO_BF_AFFINE_FULL
+  greedy -d 3 -rf $BFVIS_MRILIKE \
+    -rm $MOLD_MRI_N4 $MRI_TO_BFVIS_AFFINE \
+    -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BFVIS_AFFINE_MASK \
+    -r $MRI_TO_BFVIS_AFFINE_FULL
 
-  # Reslice the high-resolution MRI as well. Also reslice the high-resolution MRI mask, 
+  # Reslice the high-resolution MRI as well. Also reslice the high-resolution MRI mask,
   # so we can perform registration to histology later
-  greedy -d 3 -rf $BF_MRILIKE -rm $HIRES_MRI $HIRES_MRI_TO_BF_AFFINE \
-    -r $HIRES_TO_BF_AFFINE_FULL
+  greedy -d 3 -rf $BFVIS_MRILIKE -rm $HIRES_MRI $HIRES_MRI_TO_BFVIS_AFFINE \
+    -r $HIRES_TO_BFVIS_AFFINE_FULL
 
   # For some reason Greedy is throwing up errors if I c
-  greedy -d 3 -rf $BF_MRILIKE \
-    -rm $HIRES_MRI $HIRES_MRI_TO_BF_WARPED \
-    -ri NN -rm $HIRES_MRI_REGMASK $HIRES_MRI_MASK_TO_BF_WARPED \
-    -r $HIRES_TO_BF_WARP_FULL
+  greedy -d 3 -rf $BFVIS_MRILIKE \
+    -rm $HIRES_MRI $HIRES_MRI_TO_BFVIS_WARPED \
+    -ri NN -rm $HIRES_MRI_REGMASK $HIRES_MRI_MASK_TO_BFVIS_WARPED \
+    -r $HIRES_TO_BFVIS_WARP_FULL
 
   # If validation tracings exist in MRI space, map them to the blockface space
   # for evaluation purposes. 
   if [[ -f $HIRES_MRI_MANUAL_TRACE ]]; then
 
-    greedy -d 3 -rf $BF_MRILIKE \
+    greedy -d 3 -rf $BFVIS_MRILIKE \
       -ri LABEL 0.1mm \
-      -rm $HIRES_MRI_MANUAL_TRACE $HIRES_MRI_MANUAL_TRACE_TO_BF_WARPED \
-      -r $HIRES_TO_BF_WARP_FULL $HIRES_MRI_MANUAL_TRACE_AFFINE,-1
+      -rm $HIRES_MRI_MANUAL_TRACE $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
+      -r $HIRES_TO_BFVIS_WARP_FULL $HIRES_MRI_MANUAL_TRACE_AFFINE,-1
 
   fi
 
   # Create a workspace native to the blockface image
   itksnap-wt \
-    -laa $BF_RECON_NII -psn "Blockface" -props-set-mcd rgb \
-    -laa $BF_MRILIKE -psn "Blockface MRI-like" \
-    -laa $MRI_TO_BF_AFFINE -psn "Mold MRI" \
-    -las $MRI_TO_BF_AFFINE_MASK -psn "Mold Mask" \
-    -laa $HIRES_MRI_TO_BF_WARPED -psn "Hires MRI Warped" \
-    -las $HIRES_MRI_MASK_TO_BF_WARPED -psn "Hires Mask" \
-    -o $MRI_TO_BF_WORKSPACE
+    -laa $BFVIS_RGB -psn "Blockface RGB" -props-set-mcd rgb \
+    -laa $BFVIS_MRILIKE -psn "Blockface MRI-like" \
+    -laa $MRI_TO_BFVIS_AFFINE -psn "Mold MRI" \
+    -las $MRI_TO_BFVIS_AFFINE_MASK -psn "Mold Mask" \
+    -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "Hires MRI Warped" \
+    -las $HIRES_MRI_MASK_TO_BFVIS_WARPED -psn "Hires Mask" \
+    -o $MRI_TO_BFVIS_WORKSPACE
 }
 
 
@@ -1064,8 +1130,6 @@ function recon_histology()
     return
   fi
 
-<<'SG_BLOCKFACE'
-
   # Run processing with stack_greedy
   stack_greedy init -M $HISTO_RECON_MANIFEST -gm $HISTO_RECON_DIR
 
@@ -1075,7 +1139,7 @@ function recon_histology()
   stack_greedy recon -z 1.6 4.0 \
     -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy volmatch -i $BF_MRILIKE \
+  stack_greedy volmatch -i $BFVIS_MRILIKE \
     -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
 
   stack_greedy voliter -R 1 10 -na 10 -nd 10 -w 0.5 -wdp \
@@ -1086,56 +1150,63 @@ function recon_histology()
 
   # Now run stack_greedy against the MRI volume. We use the results of the
   # last affine stage to prime
-  stack_greedy voladd -i $HIRES_MRI_TO_BF_WARPED -n mri $HISTO_RECON_DIR
+  stack_greedy voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
 
   # We are using the result of iteration 10 to start the MRI registration
   stack_greedy voliter -R 21 30 -k 10 -na 10 -nd 20 -w 4.0 -wdp \
     -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm \
     -i mri $HISTO_RECON_DIR
 
-SG_BLOCKFACE
-
   # Splat the NISSL slides if they are available
   local nissl_z0=$(cat $NISSL_ZRANGE | sort -n | head -n 1)
   local nissl_z1=$(cat $NISSL_ZRANGE | sort -n | tail -n 1)
   local nissl_zstep=0.5
 
+  # Create a reference space for splatting. This reference space has
+  # higher resolution than the original blockface images to allow better
+  # histology visualization and crisper annotations
+
+
   # Perform splatting at different stages
   local SPLAT_STAGES="recon volmatch voliter-10 voliter-20 voliter-30"
   for STAGE in $SPLAT_STAGES; do
 
-<<'GOOGAA'
     local OUT="$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE)"
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
-      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
+      -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_NISSL_RGB_SPLAT_MANIFEST -rb 255.0 $HISTO_RECON_DIR
 
     local OUT="$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE)"
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
-      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
+      -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
 
     if [[ -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST ]]; then
       local OUT="$(printf $HISTO_NISSL_REGEVAL_SPLAT_PATTERN $STAGE)"
       stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
-        -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
+        -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
+        -S exact -ztol 0.2 -si 3.0 \
         -H -M $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
-    fi
-GOOGAA
-
-    if [[ -f $HISTO_ANNOT_SPLAT_MANIFEST ]]; then
-      local OUT="$(printf $HISTO_ANNOT_SPLAT_PATTERN $STAGE)"
-      stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
-        -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
-        -H -M $HISTO_ANNOT_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
     fi
 
   done
 
+  # The remaining splats should only use the last stage
+  STAGE=voliter-30
+  if [[ -f $HISTO_ANNOT_SPLAT_MANIFEST ]]; then
+    local OUT="$(printf $HISTO_ANNOT_SPLAT_PATTERN $STAGE)"
+    stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
+      -S exact -ztol 0.2 -si 3.0 \
+      -H -M $HISTO_ANNOT_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+  fi
+
   # Create a blockface reference image that has the same dimensions as the
   # splatted images. This will be used to extract edges
   c3d $(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN volmatch) \
-    $BF_MRILIKE -int 0 -reslice-identity -o $HISTO_NISSL_SPLAT_BF_MRILIKE \
+    $BFVIS_MRILIKE -int 0 -reslice-identity -o $HISTO_NISSL_SPLAT_BF_MRILIKE \
     -as X -slice z 0:-1 -foreach -canny 0.4x0.4x0.0mm 0.2 0.2 -endfor -tile z \
     -insert X 1 -copy-transform -o $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES
 
@@ -1153,9 +1224,9 @@ GOOGAA
     -psn "MRIlike warp to BF" -props-set-contrast LINEAR 0 0.2 \
     -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-10)" \
     -psn "MRIlike affine to BF" -props-set-contrast LINEAR 0 0.2 \
-    -laa $HIRES_MRI_TO_BF_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
+    -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
     -laa $HISTO_NISSL_SPLAT_BF_MRILIKE -psn "Blockface (MRI-like)" -props-set-contrast LINEAR 0.5 1.0 \
-    -laa $BF_RECON_NII -psn "Blockface" -props-set-contrast LINEAR 0.0 0.5 -props-set-mcd rgb \
+    -laa $BFVIS_RGB -psn "Blockface" -props-set-contrast LINEAR 0.0 0.5 -props-set-mcd rgb \
     -las $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES \
     -o $HISTO_NISSL_SPLAT_WORKSPACE
 }
@@ -1218,6 +1289,8 @@ function upload_histo_recon_results()
 
   # Create output directory
   mkdir -p $HISTO_AFFINE_X16_DIR
+
+<<'THIS_IS_OUT_OF_DATE'
 
   # Get the transformation into the viewport space
   local VP_AFFINE=$TMPDIR/viewport_affine.mat
@@ -1311,6 +1384,8 @@ function upload_histo_recon_results()
     gsutil cp $SLIDE_RAW_AFFINE_MATRIX $SLIDE_RAW_AFFINE_MATRIX_GSURL
 
   done < $HISTO_MATCH_MANIFEST
+
+THIS_IS_OUT_OF_DATE
 }
 
 function upload_histo_recon_results_all()
@@ -1661,7 +1736,7 @@ function splat_density()
     -psn "$stain" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
     -laa $IHC_DENSITY_SPLAT_IMG \
     -psn "$stain $model density" -props-set-colormap hot \
-    -laa $HIRES_MRI_TO_BF_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
+    -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
     -o $IHC_DENSITY_SPLAT_WORKSPACE
 }
 
@@ -1744,7 +1819,7 @@ function merge_splat()
       local TMPMAP=$TMPDIR/$splat_${id}_${block}_${stain}_${model}.nii.gz
       greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
         -rm $IHC_DENSITY_SPLAT_IMG $TMPMAP \
-        -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $BF_TO_HIRES_FULL
+        -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $BFVIS_TO_HIRES_FULL
 
       SPLATMAPS="$SPLATMAPS $TMPMAP"
     fi
