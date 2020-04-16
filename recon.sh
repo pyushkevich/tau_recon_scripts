@@ -3,8 +3,13 @@ set -x -e
 ROOT=/data/picsl/pauly/tau_atlas
 mkdir -p $ROOT/dump
 
+# Histoannot server options
+PHAS_SERVER="https://histo.itksnap.org"
+PHAS_ANNOT_TASK=2
+
 # Set the paths for the tools
 export PATH=$ROOT/bin:/data/picsl/pauly/bin:/data/picsl/pauly/bin/ants:$PATH
+export LD_LIBRARY_PATH=$ROOT/lib:$LD_LIBRARY_PATH
 
 # The directory with manifest files
 MDIR=$ROOT/manifest
@@ -134,6 +139,9 @@ function set_block_vars()
   # Slide selection for the block
   BF_SLIDES=$BF_RECON_DIR/${id}_${block}_slides.txt
 
+  # Preview image for the block
+  BF_PREVIEW=$BF_RECON_DIR/${id}_${block}_preview.png
+
   # Blockface registration stuff
   BF_REG_DIR=$ROOT/work/$id/bfreg/$block
 
@@ -206,6 +214,11 @@ function set_block_vars()
   # Location of splatted files
   HISTO_SPLAT_DIR=$HISTO_REG_DIR/splat
 
+  # Directory for histology annotations
+  HISTO_ANNOT_DIR=$ROOT/work/$id/annot/$block
+  HISTO_ANNOT_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_manifest.txt
+  HISTO_ANNOT_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_%s.nii.gz
+
   # Splatted files
   HISTO_NISSL_RGB_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat_manifest.txt
   HISTO_NISSL_RGB_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat_%s.nii.gz
@@ -222,7 +235,7 @@ function set_block_vars()
   HISTO_AFFINE_X16_DIR=$ROOT/export/affine_x16/${id}/${block}
 
   # Where histology-derived density maps are stored
-  HISTO_DENSITY_DIR=$ROOT/work/$id/histomaps/$block
+  HISTO_DENSITY_DIR=$ROOT/work/$id/ihc_maps/$block
 
   # Manifest file for registration validation splatting
   HISTO_NISSL_REGEVAL_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_regeval_splat_manifest.txt
@@ -356,6 +369,11 @@ function set_ihc_slice_vars()
   GSURL_RECON_BASE=gs://mtl_histology/${id}/histo_proc/${svs}/recon
   SLIDE_RAW_AFFINE_MATRIX_GSURL=$GSURL_RECON_BASE/${svs}_recon_iter10_affine.mat
 
+  # The name of the annotation SVG file and timestamp
+  SLIDE_ANNOT_SVG=$HISTO_ANNOT_DIR/${svs}_annot.svg
+  SLIDE_ANNOT_PNG=$HISTO_ANNOT_DIR/${svs}_annot.png
+  SLIDE_ANNOT_TIMESTAMP=$HISTO_ANNOT_DIR/${svs}_timestamp.json
+
   # Restore trace state
   set +vx; eval $tracestate
 }
@@ -389,6 +407,64 @@ function get_slide_url()
       echo $url
     fi
   done
+}
+
+
+# Preview function for blockface images. Given a directory of blockface images,
+# this generates a preview montage that can be used to check parameters
+function preview_blockface()
+{
+  # Read the specimen and block to process
+  read -r id block args <<< "$@"
+
+  # Read the rest of the info from the parameter file
+  local ROW=$(cat $MDIR/blockface_param.txt | grep "$id\W*$block")
+    
+  # Read all the arguments
+  read -r id block spacing offset size resample first last swapdim args <<< "$ROW"
+
+  # Get the variables
+  set_block_vars $id $block
+
+  # Clear the temporary directory
+  rm -rf $TMPDIR/*
+  mkdir -p $BF_RECON_DIR
+
+  # Generate a list of slides that are in prescribed range
+  ls $BF_INPUT_DIR | grep 'jpg$' | \
+    awk -v first=$first -v last=$last \
+      '(NR >= first) && (NR <= last || last < 0) {print $0}' \
+    > $BF_SLIDES
+
+  # Sample some slices
+  local N K POS fn
+  N=$(cat $BF_SLIDES | wc -l)
+  for POS in 0.04 0.3 0.5 0.7 0.96; do
+
+    K=$(echo "($POS * $N)/1" | bc)
+    fn=$(cat $BF_SLIDES | head -n $K | tail -n 1)
+    
+    # Resampling commands
+    if [[ $resample -eq 1 ]]; then
+      RESCOM=""
+    else
+      RESCOM=$(echo $resample | awk '{printf "-smooth-fast %gvox -resample %g%%\n",$1/2.0,100/$1}')
+    fi
+
+    # Crop and resample
+    c2d -mcs -verbose $BF_INPUT_DIR/$fn \
+      -foreach -region $offset $size $RESCOM -endfor \
+      -type uchar -omc $TMPDIR/temp_${fn/.jpg/.png}
+
+    # Swap dimensions (rotate & flip)
+    c3d -verbose -mcs $TMPDIR/temp_${fn/.jpg/.png} \
+      -foreach -swapdim ${swapdim} -orient RAI -endfor \
+      -type uchar -omc $TMPDIR/rgb_${fn/.jpg/.png}
+
+  done
+
+  # Generate a montage
+  montage $TMPDIR/rgb_*.png -tile 5x1 -geometry +2+2 $BF_PREVIEW
 }
 
 
@@ -629,7 +705,7 @@ function process_mri_all()
 
     # Submit the jobs
     qsub $QSUBOPT -N "mri_reg_${id}" \
-      -l h_vmem=8G -l s_vmem=8G \
+      -l h_vmem=16G -l s_vmem=16G \
       $0 process_mri $id $orient $args
 
   done
@@ -731,7 +807,8 @@ function register_blockface()
 
   # Create a workspace native to the blockface image
   itksnap-wt \
-    -laa $BF_RECON_NII -psn "Blockface" \
+    -laa $BF_RECON_NII -psn "Blockface" -props-set-mcd rgb \
+    -laa $BF_MRILIKE -psn "Blockface MRI-like" \
     -laa $MRI_TO_BF_AFFINE -psn "Mold MRI" \
     -las $MRI_TO_BF_AFFINE_MASK -psn "Mold Mask" \
     -laa $HIRES_MRI_TO_BF_WARPED -psn "Hires MRI Warped" \
@@ -798,13 +875,16 @@ function pull_histo_match_manifest()
   local url=$(cat $MDIR/histo_matching.txt | awk -v id=$id '$1 == id {print $2}')
   if [[ ! $url ]]; then
     echo "Missing histology matching data in Google sheets"
-    return -1
+    return
   fi
 
   # Load the manifest and parse for the block of interest, put into temp file
+  local TMPFILE_FULL=$TMPDIR/manifest_full_${id}_${block}.txt
   local TMPFILE=$TMPDIR/manifest_${id}_${block}.txt
 
-  curl -s "$url" 2>&1 | \
+  curl -s "$url" > "$TMPFILE_FULL" 2>&1
+
+  cat $TMPFILE_FULL | \
     grep -v duplicate | \
     grep -v exclude | \
     grep -v multiple | \
@@ -841,9 +921,6 @@ function preproc_histology()
   # Set the block variables
   set_block_vars $id $block
 
-  # Create the manifest for this block
-  pull_histo_match_manifest $id $block
-
   # Read all the slices for this block
   while IFS=, read -r svs stain dummy section slice args; do
 
@@ -869,7 +946,7 @@ function preproc_histology()
     # TODO: remove the 'exists' check for production
     if [[ $stain == "NISSL" && ! -f $SLIDE_MASK ]]; then
 
-      c2d $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
+      c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
         -pop -pop -thresh 0.5 inf 1 0 -o $SLIDE_MASK
 
     fi
@@ -892,9 +969,6 @@ function recon_histology()
   # Create directories
   mkdir -p $HISTO_SPLAT_DIR $HISTO_RECON_DIR $HISTO_REG_DIR
 
-  # Create the manifest
-  pull_histo_match_manifest $id $block
-
   # Slice thickness. If this ever becomes variable, read this from the blockface_param file
   THK="0.05"
   
@@ -905,6 +979,7 @@ function recon_histology()
   # Additional manifest: for generating RGB NISSL images
   rm -f $HISTO_NISSL_RGB_SPLAT_MANIFEST $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
   rm -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
+  rm -f $HISTO_HISTO_ANNOT_SPLAT_MANIFEST
 
   # Another file to keep track of the range of NISSL files
   local NISSL_ZRANGE=$TMPDIR/nissl_zrange.txt
@@ -962,9 +1037,16 @@ function recon_histology()
       echo $ZPOS >> $NISSL_ZRANGE
 
       # Check if there is a registration validation tracing for this slide
-      svs_regval=$(find $SPECIMEN_HISTO_REGVAL_ROOT -name "*__${svs}.png")
+      # svs_regval=$(find $SPECIMEN_HISTO_REGVAL_ROOT -name "*__${svs}.png")
+      local svs_regval=$(ls "$SPECIMEN_HISTO_REGVAL_ROOT/*__${svs}.png")
       if [[ $svs_regval && -f $svs_regval ]]; then
         echo $svs $svs_regval >> $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
+      fi
+
+      # Check if there is an annotation validation tracing for this slide
+      local svs_annot="$HISTO_ANNOT_DIR/${svs}_annot.png"
+      if [[ -f $svs_annot ]]; then
+        echo $svs $svs_annot >> $HISTO_ANNOT_SPLAT_MANIFEST
       fi
     fi
 
@@ -973,16 +1055,16 @@ function recon_histology()
   # If no manifest generated, return
   if [[ ! -f $HISTO_RECON_MANIFEST ]]; then
     echo "No histology slides found"
-    return -1
+    return
   fi
 
   # Must have "leader" NISSL slices
   if [[ ! -f $NISSL_ZRANGE ]]; then
     echo "No NISSL slides found"
-    return -1
+    return
   fi
 
-<<'SKIP1'
+<<'SG_BLOCKFACE'
 
   # Run processing with stack_greedy
   stack_greedy init -M $HISTO_RECON_MANIFEST -gm $HISTO_RECON_DIR
@@ -990,19 +1072,28 @@ function recon_histology()
   # Jan 2020: the zeps=4 value seems to work better for the NCC metric, the
   # previously used value of 0.5 ended up having lots of slices skipped. But
   # need to doublecheck that this does not hurt other registrations
-  stack_greedy -N recon -z 1.6 4.0 \
+  stack_greedy recon -z 1.6 4.0 \
     -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy -N volmatch -i $BF_MRILIKE \
+  stack_greedy volmatch -i $BF_MRILIKE \
     -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy -N voliter -na 10 -nd 10 -w 0.5 -wdp \
-    -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr $HISTO_RECON_DIR
+  stack_greedy voliter -R 1 10 -na 10 -nd 10 -w 0.5 -wdp \
+    -m NCC 8x8 -n 100x40x10 $HISTO_RECON_DIR
 
-SKIP1
+  stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
+    -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm $HISTO_RECON_DIR
 
-  stack_greedy voliter -na 10 -nd 10 -w 0.5 -wdp -R 11 20\
-    -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm $HISTO_RECON_DIR
+  # Now run stack_greedy against the MRI volume. We use the results of the
+  # last affine stage to prime
+  stack_greedy voladd -i $HIRES_MRI_TO_BF_WARPED -n mri $HISTO_RECON_DIR
+
+  # We are using the result of iteration 10 to start the MRI registration
+  stack_greedy voliter -R 21 30 -k 10 -na 10 -nd 20 -w 4.0 -wdp \
+    -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm \
+    -i mri $HISTO_RECON_DIR
+
+SG_BLOCKFACE
 
   # Splat the NISSL slides if they are available
   local nissl_z0=$(cat $NISSL_ZRANGE | sort -n | head -n 1)
@@ -1010,9 +1101,10 @@ SKIP1
   local nissl_zstep=0.5
 
   # Perform splatting at different stages
-  local SPLAT_STAGES="recon volmatch voliter-10 voliter-20"
+  local SPLAT_STAGES="recon volmatch voliter-10 voliter-20 voliter-30"
   for STAGE in $SPLAT_STAGES; do
 
+<<'GOOGAA'
     local OUT="$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE)"
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
       -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
@@ -1029,6 +1121,14 @@ SKIP1
         -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
         -H -M $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
     fi
+GOOGAA
+
+    if [[ -f $HISTO_ANNOT_SPLAT_MANIFEST ]]; then
+      local OUT="$(printf $HISTO_ANNOT_SPLAT_PATTERN $STAGE)"
+      stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
+        -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
+        -H -M $HISTO_ANNOT_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+    fi
 
   done
 
@@ -1041,21 +1141,23 @@ SKIP1
 
   # Create an ITK-SNAP workspace
   itksnap-wt \
-    -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)" \
-    -psn "NISSL voliter-20" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+    -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-30)" \
+    -psn "NISSL warp to MRI" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+    -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)" \
+    -psn "NISSL warp to BF" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
     -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-10)" \
-    -psn "NISSL voliter-10" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+    -psn "NISSL affine to BF" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-30)" \
+    -psn "MRIlike warp to MRI" -props-set-contrast LINEAR 0 0.2 \
     -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-20)" \
-    -psn "MRIlike voliter-20" -props-set-contrast LINEAR 0 0.2 \
+    -psn "MRIlike warp to BF" -props-set-contrast LINEAR 0 0.2 \
     -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-10)" \
-    -psn "MRIlike voliter-10" -props-set-contrast LINEAR 0 0.2 \
+    -psn "MRIlike affine to BF" -props-set-contrast LINEAR 0 0.2 \
     -laa $HIRES_MRI_TO_BF_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
     -laa $HISTO_NISSL_SPLAT_BF_MRILIKE -psn "Blockface (MRI-like)" -props-set-contrast LINEAR 0.5 1.0 \
     -laa $BF_RECON_NII -psn "Blockface" -props-set-contrast LINEAR 0.0 0.5 -props-set-mcd rgb \
     -las $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES \
     -o $HISTO_NISSL_SPLAT_WORKSPACE
-
-
 }
 
 function preproc_histology_all()
@@ -1065,6 +1167,9 @@ function preproc_histology_all()
 
   # Process the individual blocks
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Create the manifest for this block
+    pull_histo_match_manifest $id $block
 
     # Submit the jobs
     qsub $QSUBOPT -N "preproc_histo_${id}_${block}" \
@@ -1085,6 +1190,9 @@ function recon_histo_all()
 
   # Process the individual blocks
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Pull the histology manifest (no need for qsubbing)
+    pull_histo_match_manifest $id $block
 
     # Submit the jobs
     qsub $QSUBOPT -N "recon_histo_${id}_${block}" \
@@ -1340,10 +1448,7 @@ function match_ihc_to_nissl()
   # Create output directory
   mkdir -p $IHC_TO_NISSL_DIR
 
-  # Pull the manifest
-  pull_histo_match_manifest $id $block
-
-  # Create a splatting manifest 
+  # Create a splatting manifest
   rm -rf $IHC_RGB_SPLAT_MANIFEST $IHC_REGEVAL_SPLAT_MANIFEST
 
   # Iterate over slides in the manifest
@@ -1470,7 +1575,7 @@ SKIPDEF
 
     # Does the registration validation exist? If so, we need to also reslice it to
     # the NISSL space
-    local svs_regval=$(find $SPECIMEN_HISTO_REGVAL_ROOT -name "*__${svs}.png")
+    local svs_regval=$(ls "$SPECIMEN_HISTO_REGVAL_ROOT/*__${svs}.png")
     if [[ $svs_regval && -f $svs_regval ]]; then
       
       # Reslice using the chunking warp
@@ -1503,11 +1608,11 @@ function splat_density()
   # Create output directory
   mkdir -p $IHC_TO_NISSL_DIR
 
-  # Pull the manifest
-  pull_histo_match_manifest $id $block
-
   # Clear the splat manifest file
   rm -f $IHC_DENSITY_SPLAT_MANIFEST
+
+  # Create output directory
+  mkdir -p $HISTO_DENSITY_DIR
 
   # Read individual slides
   while IFS=, read -r svs slide_stain dummy section slice args; do
@@ -1568,6 +1673,9 @@ function match_ihc_to_nissl_all()
   # Process the individual blocks
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
 
+    # Create the manifest for this block
+    pull_histo_match_manifest $id $block
+
     # Submit the jobs
     qsub $QSUBOPT -N "match_nissl_${stain?}_${id}_${block}" \
       $0 match_ihc_to_nissl $id $block $stain 
@@ -1585,6 +1693,9 @@ function splat_density_all()
 
   # Process the individual blocks
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Create the manifest for this block
+    pull_histo_match_manifest $id $block
 
     # Submit the jobs
     qsub $QSUBOPT -N "splat_${stain?}_${model?}_${id}_${block}" \
@@ -1647,7 +1758,7 @@ function merge_splat()
 
   # Create a merged workspace
   itksnap-wt \
-    -lsm "$HIRES_MRI_VIS_REFSPACE" -psn "9.4T MRI" \
+    -lsm "$HIRES_MRI_VIS" -psn "9.4T MRI" \
     -laa "$SPECIMEN_DENSITY_SPLAT_VIS" -psn "${stain} ${model}" \
     -props-set-colormap "hot" \
     -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
@@ -1670,10 +1781,108 @@ function merge_splat_all()
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "splat_${stain}_${model}*" /bin/sleep 0
+  qsub $QSUBOPT -b y -sync y -hold_jid "merge_${stain}_${model}*" /bin/sleep 0
 }
 
 
+# Get the slide annotations in SVG format from the server and map them to a
+# format that can be used during annotation
+function rsync_histo_annot()
+{
+  # What specimen and block are we doing this for?
+  read -r id block args <<< "$@"
+
+  # Set the block variables
+  set_block_vars $id $block
+
+  # Create directories
+  mkdir -p $HISTO_ANNOT_DIR
+
+  # Read the slide manifest
+  while IFS=, read -r svs stain dummy section slice args; do
+
+    # Set the variables
+    set_ihc_slice_vars $id $block $svs $stain $section $slice $args
+
+    # Annotation is performed only on NISSL slides
+    if [[ $stain != "NISSL" ]]; then
+      continue
+    fi
+
+    # Get the timestamp of the annotation
+    local TS_URL="$PHAS_SERVER/api/task/$PHAS_ANNOT_TASK/slidename/$svs/annot/timestamp"
+    local TS_REMOTE_JSON=$(curl -ksf $TS_URL)
+    local TS_REMOTE=$(echo $TS_REMOTE_JSON | jq .timestamp)
+
+    # If there is nothing on the server, clean up locally and stop
+    if [[ $TS_REMOTE == "null" ]]; then
+      rm -f $SLIDE_ANNOT_SVG $SLIDE_ANNOT_TIMESTAMP $SLIDE_ANNOT_PNG
+      continue
+    fi
+
+    # Does the SVG exist? Then check if it is current
+    if [[ -f $SLIDE_ANNOT_SVG ]]; then
+      local TS_LOCAL
+      if [[ -f $SLIDE_ANNOT_TIMESTAMP ]]; then
+        TS_LOCAL=$(cat $SLIDE_ANNOT_TIMESTAMP | jq .timestamp)
+      else
+        TS_LOCAL=0
+      fi
+
+      if [[ $(echo "$TS_REMOTE > $TS_LOCAL" | bc) -eq 1 ]]; then
+        rm -f $SLIDE_ANNOT_SVG
+      else
+        echo "File $SLIDE_ANNOT_SVG is up to date"
+      fi
+    fi
+
+    if [[ ! -f $SLIDE_ANNOT_SVG ]]; then
+      # Download the SVG
+      local SVG_URL="$PHAS_SERVER/api/task/$PHAS_ANNOT_TASK/slidename/$svs/annot/svg"
+      if ! curl -ksfo $SLIDE_ANNOT_SVG -d stroke_width=250 -d font_size=2000px -d font_color=darkgray $SVG_URL; then
+        echo "Unable to download $SLIDE_ANNOT_SVG"
+        continue
+      fi
+
+      # Record the timestamp
+      echo $TS_REMOTE_JSON > $SLIDE_ANNOT_TIMESTAMP
+
+      # Make sure the PNG gets generated
+      rm -f $SLIDE_ANNOT_PNG
+    fi
+
+    # Now that we have the SVG, convert it to PNG format. No need to fix it
+    # to a given size, that will happen later during splatting
+    if [[ ! -f $SLIDE_ANNOT_PNG ]]; then
+      convert -density 2 -depth 8 $SLIDE_ANNOT_SVG \
+        -set colorspace Gray -separate -average -negate \
+        $SLIDE_ANNOT_PNG
+    fi
+
+  done < $HISTO_MATCH_MANIFEST
+}
+
+
+function rsync_histo_annot_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Pull the histology manifest (no need for qsubbing)
+    pull_histo_match_manifest $id $block
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "rsync_histo_annot_${id}_${block}" \
+      $0 rsync_histo_annot $id $block
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "rsync_histo_annot_*" /bin/sleep 0
+}
 
 function main()
 {
@@ -1685,6 +1894,11 @@ COMMAND=$1
 if [[ ! $COMMAND ]]; then
   main
 else
+  # Stupid bug fix for chead
+  if echo $COMMAND | grep '_all' > /dev/null; then
+    echo "RESET LD_LIBRARY_PATH"
+    export LD_LIBRARY_PATH=
+  fi
   shift
   $COMMAND "$@"
 fi
