@@ -6,6 +6,7 @@ mkdir -p $ROOT/dump
 # Histoannot server options
 PHAS_SERVER="https://histo.itksnap.org"
 PHAS_ANNOT_TASK=2
+PHAS_REGEVAL_TASK=6
 
 # Set the paths for the tools
 export PATH=$ROOT/bin:/data/picsl/pauly/bin:/data/picsl/pauly/bin/ants:$PATH
@@ -68,6 +69,7 @@ function set_specimen_vars()
   MOLD_TO_HIRES_WORKSPACE=$MRI_WORK_DIR/${id}_mri_warp_fx_hires_mv_mold.itksnap
   HIRES_MRI_REGMASK=$MRI_WORK_DIR/${id}_mri_hires_mask.nii.gz
   RESLICE_MOLD_TO_HIRES=$MRI_WORK_DIR/${id}_mri_mold_reslice_to_hires.nii.gz
+  RESLICE_HIRES_TO_MOLD=$MRI_WORK_DIR/${id}_mri_hires_reslice_to_mold.nii.gz
 
   # Workspaces for mold-blockface preregistration
   MOLD_WORKSPACE_DIR=$MANUAL_DIR/bf_to_mold
@@ -92,8 +94,9 @@ function set_specimen_vars()
   # Matrix used to manually rotate the high-res MRI into mold space (Sydney)
   HIRES_MRI_MANUAL_TRACE_AFFINE=$ROOT/manual/$id/reg_eval/${id}_mri_hires_to_mold_affine_fix.mat
 
-  # Location of registration validation tracings for histology
-  SPECIMEN_HISTO_REGVAL_ROOT=$ROOT/manual/$id/reg_eval/svg
+  # Manual segmentation of the PHG from Sadhana
+  HIRES_MRI_MANUAL_PHGSEG=$ROOT/manual/$id/mri_seg/${id}_axisalign_phgsegshape_multilabel.nii.gz
+  HIRES_MRI_MANUAL_PHGSEG_AFFINE=$ROOT/manual/$id/mri_seg/${id}_raw_to_axisalign.mat
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -175,6 +178,7 @@ function set_block_vars()
   # Derived images in BFVIS space
   BFVIS_MRILIKE=$BF_REG_DIR/${id}_${block}_bfvis_mrilike.nii.gz
   BFVIS_ICEMASK=$BF_REG_DIR/${id}_${block}_bfvis_icemask.nii.gz
+  BFVIS_REGMASK=$BF_REG_DIR/${id}_${block}_bfvis_regmask.nii.gz
 
   # MRI crudely mapped to BFVIS space
   MRI_TO_BFVIS_INIT=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_init.nii.gz
@@ -189,8 +193,17 @@ function set_block_vars()
   MRI_TO_BFVIS_AFFINE=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_affine.nii.gz
   MRI_TO_BFVIS_AFFINE_MASK=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_affine_mask.nii.gz
 
-  # Hires MRI resampled to block
-  HIRES_MRI_TO_BFVIS_AFFINE=$BF_REG_DIR/${id}_${block}_hires_mri_to_bfvis_affine.nii.gz
+  # First iteration, based on mold MRI to BF affine
+  HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE=$BF_REG_DIR/${id}_${block}_hires_mri_to_bfvis_warped_intermediate.nii.gz
+
+  # The registration between the intermediate above and the blockface
+  BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE=$BF_REG_DIR/${id}_${block}_hires_mri_intermediate_to_bfvis_affine.mat
+
+  # Complete affine that takes 7T MRI into BFVIS (and inverse)
+  MRI_TO_BFVIS_AFFINE_FULL=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_affine_full.mat
+  BFVIS_TO_MRI_AFFINE_FULL=$BF_REG_DIR/${id}_${block}_bfvis_to_mri_affine_full.mat
+
+  # High-res MRI transformed into the BFVIS space
   HIRES_MRI_TO_BFVIS_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_to_bfvis_warped.nii.gz
   HIRES_MRI_MASK_TO_BFVIS_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_mask_to_bfvis_warped.nii.gz
 
@@ -198,20 +211,20 @@ function set_block_vars()
   HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED=$BF_REG_DIR/${id}_${block}_hires_mri_to_bfvis_valseg_warped.nii.gz
 
   # Sequence of transforms to take MOLD MRI to BF reference space
-  MRI_TO_BFVIS_AFFINE_FULL="$BFVIS_TO_MRI_AFFINE,-1 \
-                            $BF_TO_BFVIS_RIGID \
-                            $BF_TOMOLD_MANUAL_RIGID,-1 \
-                            $MOLD_RIGID_MAT"
+  #MRI_TO_BFVIS_AFFINE_FULL="$BFVIS_TO_MRI_AFFINE,-1 \
+  #                          $BF_TO_BFVIS_RIGID \
+  #                          $BF_TOMOLD_MANUAL_RIGID,-1 \
+  #                          $MOLD_RIGID_MAT"
 
   # Sequence of transforms to take high-resolution MRI to BF reference space
   HIRES_TO_BFVIS_AFFINE_FULL="$MRI_TO_BFVIS_AFFINE_FULL $HIRES_TO_MOLD_AFFINE"
   HIRES_TO_BFVIS_WARP_FULL="$HIRES_TO_BFVIS_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
 
   # Inverse of the above transforms
-  BFVIS_TO_MRI_AFFINE_FULL="$MOLD_RIGID_MAT,-1 \
-                         $BF_TOMOLD_MANUAL_RIGID \
-                         $BF_TO_BFVIS_RIGID,-1 \
-                         $BFVIS_TO_MRI_AFFINE"
+  #BFVIS_TO_MRI_AFFINE_FULL="$MOLD_RIGID_MAT,-1 \
+  #                       $BF_TOMOLD_MANUAL_RIGID \
+  #                       $BF_TO_BFVIS_RIGID,-1 \
+  #                       $BFVIS_TO_MRI_AFFINE"
 
   BFVIS_TO_HIRES_AFFINE_FULL="$HIRES_TO_MOLD_AFFINE,-1 $BFVIS_TO_MRI_AFFINE_FULL"
   BFVIS_TO_HIRES_FULL="$MOLD_TO_HIRES_WARP $BFVIS_TO_HIRES_AFFINE_FULL"
@@ -232,10 +245,16 @@ function set_block_vars()
   # Location of splatted files
   HISTO_SPLAT_DIR=$HISTO_REG_DIR/splat
 
+  # Another useful manifest file that describes the position of each slice in the splat output
+  HISTO_NISSL_SPLAT_ZPOS_FILE=$HISTO_SPLAT_DIR/${id}_${block}_splat_zindex.txt
+
   # Directory for histology annotations
   HISTO_ANNOT_DIR=$ROOT/work/$id/annot/$block
   HISTO_ANNOT_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_manifest.txt
   HISTO_ANNOT_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_%s.nii.gz
+
+  # Directory for registation validation curves from histology
+  HISTO_REGEVAL_DIR=$ROOT/work/$id/regeval/$block
 
   # Splatted files
   HISTO_NISSL_RGB_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat_manifest.txt
@@ -248,6 +267,9 @@ function set_block_vars()
   HISTO_NISSL_SPLAT_BF_MRILIKE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_splat_bf_mrilike.nii.gz
   HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES=$HISTO_SPLAT_DIR/${id}_${block}_nissl_splat_bf_mrilike_edges.nii.gz
 
+  # Manual segmentation of the PHG in the splat space, for editing
+  HISTO_NISSL_SPLAT_HIRES_MRI_PHGSEG=$HISTO_SPLAT_DIR/${id}_${block}_nissl_splat_hires_mri_phgseg_multilabel.nii.gz
+
   # Files exported to the segmentation server. These should be stored in a convenient
   # to copy location 
   HISTO_AFFINE_X16_DIR=$ROOT/export/affine_x16/${id}/${block}
@@ -258,6 +280,13 @@ function set_block_vars()
   # Manifest file for registration validation splatting
   HISTO_NISSL_REGEVAL_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_regeval_splat_manifest.txt
   HISTO_NISSL_REGEVAL_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_regeval_splat_%s.nii.gz
+
+  # Directory for registration evaluation metrics
+  HISTO_REGEVAL_METRIC_DIR=$HISTO_REGEVAL_DIR/metric
+
+  # 3D meshes for visual inspection
+  HISTO_REGEVAL_MRI_MESH=$HISTO_REGEVAL_METRIC_DIR/${id}_${block}_mri_regeval_mesh.vtk
+  HISTO_REGEVAL_HIST_MESH_PATTERN=$HISTO_REGEVAL_METRIC_DIR/${id}_${block}_%s_hist_regeval_mesh.vtk
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -387,10 +416,15 @@ function set_ihc_slice_vars()
   GSURL_RECON_BASE=gs://mtl_histology/${id}/histo_proc/${svs}/recon
   SLIDE_RAW_AFFINE_MATRIX_GSURL=$GSURL_RECON_BASE/${svs}_recon_iter10_affine.mat
 
-  # The name of the annotation SVG file and timestamp
+  # The name of the annotation SVG file and timestamp (don't change, filename hardcoded in download_svg)
   SLIDE_ANNOT_SVG=$HISTO_ANNOT_DIR/${svs}_annot.svg
   SLIDE_ANNOT_PNG=$HISTO_ANNOT_DIR/${svs}_annot.png
   SLIDE_ANNOT_TIMESTAMP=$HISTO_ANNOT_DIR/${svs}_timestamp.json
+
+  # The name of the registration evaluation SVG file and timestamp (don't change, filename hardcoded in download_svg)
+  SLIDE_REGEVAL_SVG=$HISTO_REGEVAL_DIR/${svs}_annot.svg
+  SLIDE_REGEVAL_PNG=$HISTO_REGEVAL_DIR/${svs}_annot.png
+  SLIDE_REGEVAL_TIMESTAMP=$HISTO_REGEVAL_DIR/${svs}_timestamp.json
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -677,7 +711,9 @@ function process_mri()
     -r $MOLD_TO_HIRES_ROOT_WARP,64 $HIRES_TO_MOLD_AFFINE,-1 
 
   # Generate the inverse warp
-  greedy -d 3 -rf $HIRES_MRI -rc $MOLD_TO_HIRES_INV_WARP -wp 0.0001 -r $MOLD_TO_HIRES_ROOT_WARP,-64
+  greedy -d 3 -rf $HIRES_MRI \
+    -rc $MOLD_TO_HIRES_INV_WARP -wp 0.0001 \
+    -r $MOLD_TO_HIRES_ROOT_WARP,-64
 
   # Create a workspace to encapsulate result
   itksnap-wt \
@@ -811,14 +847,12 @@ function register_blockface()
     -dup -int 0 -reslice-matrix $BF_TO_BFVIS_RIGID \
      -trim 2x2x0mm -o $BFVIS_REFSPACE
 
-
   # Reslice the relevant images to this reference space
   greedy -d 3 -rf $BF_ICEMASK \
     -rm $BF_MRILIKE $BFVIS_MRILIKE \
     -rm $BF_ICEMASK $BFVIS_ICEMASK \
     -rb 255 -rm $BF_RECON_NII $BFVIS_RGB \
     -r $BF_TO_BFVIS_RIGID
-
 
   # Reslice the mold MRI into the space of the blockface image
   greedy -d 3 -rf $BFVIS_MRILIKE \
@@ -835,24 +869,56 @@ function register_blockface()
     -gm $MRI_TO_BFVIS_INIT_MASK -o $BFVIS_TO_MRI_AFFINE \
     -m NCC 4x4x4 -n 60x40x0 -ia $BFVIS_TO_MRI_RIGID
 
+  # Now that we have registered the blockface to the low-res MRI,
+  # we perform a second registration between the high-resolution
+  # MRI and the blockface, with blockface as fixed, and using a mask
+  c3d $BFVIS_ICEMASK -as X -thresh 0.5 inf 1 0 \
+    -pad 0x0x5 0x0x5 0 -dilate 0 0x0x20 \
+    -insert X 1 -reslice-identity -o $BFVIS_REGMASK
+
+  # Reslice the high-res MRI into the BFVIS space using current transform.
+  # This is an insane number of transformations!
+  greedy -d 3 -rf $BFVIS_MRILIKE \
+    -rm $HIRES_MRI $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE \
+    -r $BFVIS_TO_MRI_AFFINE,-1 \
+       $BF_TO_BFVIS_RIGID \
+       $BF_TOMOLD_MANUAL_RIGID,-1 \
+       $MOLD_RIGID_MAT \
+       $HIRES_TO_MOLD_AFFINE \
+       $MOLD_TO_HIRES_INV_WARP
+
+  # Perform a second round of affine registration directly to the high-res MRI
+  # Inspection on Arp 24 2020 revealed a number of poor registrations particularly
+  # along the z-axis, and doing masked registration with the high-res image seemed
+  # to help.
+  greedy -d 3 -a -dof 12 \
+    -i $BFVIS_MRILIKE $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE \
+    -gm $BFVIS_REGMASK -o $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE \
+    -m NCC 4x4x4 -n 60x40x0 -ia-identity
+
+  # Complete registration that takes 7T MRI into BFVIS (and inverse)
+  c3d_affine_tool \
+    $MOLD_RIGID_MAT \
+    $BF_TOMOLD_MANUAL_RIGID -inv -mult \
+    $BF_TO_BFVIS_RIGID -mult \
+    $BFVIS_TO_MRI_AFFINE -inv -mult \
+    $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE -mult \
+    -o $MRI_TO_BFVIS_AFFINE_FULL \
+    -inv -o $BFVIS_TO_MRI_AFFINE_FULL
+
   # Save a workspace with the registration result
-  itksnap-wt \
-    -laa $MRI_TO_BFVIS_INIT -psn "MRI" -las $MRI_TO_BFVIS_INIT_MASK \
-    -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE_NOREG" \
-    -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE" -props-set-transform $BFVIS_TO_MRI_AFFINE \
-    -laa $BFVIS_RGB -psn "BFVIS_RGB" -props-set-transform $BFVIS_TO_MRI_AFFINE -props-set-mcd RGB \
-    -o $BFVIS_TO_MRI_WORKSPACE
+  #itksnap-wt \
+  #  -laa $MRI_TO_BFVIS_INIT -psn "MRI" -las $MRI_TO_BFVIS_INIT_MASK \
+  #  -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE_NOREG" \
+  #  -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE" -props-set-transform $BFVIS_TO_MRI_AFFINE \
+  #  -laa $BFVIS_RGB -psn "BFVIS_RGB" -props-set-transform $BFVIS_TO_MRI_AFFINE -props-set-mcd RGB \
+  #  -o $BFVIS_TO_MRI_WORKSPACE
 
   # Reslice the MRI into block space using the affine registration result
   greedy -d 3 -rf $BFVIS_MRILIKE \
     -rm $MOLD_MRI_N4 $MRI_TO_BFVIS_AFFINE \
     -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BFVIS_AFFINE_MASK \
     -r $MRI_TO_BFVIS_AFFINE_FULL
-
-  # Reslice the high-resolution MRI as well. Also reslice the high-resolution MRI mask,
-  # so we can perform registration to histology later
-  greedy -d 3 -rf $BFVIS_MRILIKE -rm $HIRES_MRI $HIRES_MRI_TO_BFVIS_AFFINE \
-    -r $HIRES_TO_BFVIS_AFFINE_FULL
 
   # For some reason Greedy is throwing up errors if I c
   greedy -d 3 -rf $BFVIS_MRILIKE \
@@ -864,9 +930,17 @@ function register_blockface()
   # for evaluation purposes. 
   if [[ -f $HIRES_MRI_MANUAL_TRACE ]]; then
 
+    # On slices that have segmentations, we want to fill the background of the
+    # slice with a different value, so that we can track borders better
+    local HIRES_MRI_MANUAL_TRACE_PROC=$TMPDIR/trace_proc.nii.gz
+    c3d $HIRES_MRI_MANUAL_TRACE -as T \
+      -thresh 1 inf 1 0 -dilate 1 500x0x500 \
+      -push T -replace 0 6 -times \
+      -o $HIRES_MRI_MANUAL_TRACE_PROC
+
     greedy -d 3 -rf $BFVIS_MRILIKE \
       -ri LABEL 0.1mm \
-      -rm $HIRES_MRI_MANUAL_TRACE $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
+      -rm $HIRES_MRI_MANUAL_TRACE_PROC $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
       -r $HIRES_TO_BFVIS_WARP_FULL $HIRES_MRI_MANUAL_TRACE_AFFINE,-1
 
   fi
@@ -877,7 +951,8 @@ function register_blockface()
     -laa $BFVIS_MRILIKE -psn "Blockface MRI-like" \
     -laa $MRI_TO_BFVIS_AFFINE -psn "Mold MRI" \
     -las $MRI_TO_BFVIS_AFFINE_MASK -psn "Mold Mask" \
-    -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "Hires MRI Warped" \
+    -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "Hires MRI (Final)" \
+    -laa $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE -psn "Hires MRI (Intermed)" \
     -las $HIRES_MRI_MASK_TO_BFVIS_WARPED -psn "Hires Mask" \
     -o $MRI_TO_BFVIS_WORKSPACE
 }
@@ -1023,8 +1098,10 @@ function preproc_histology()
 
 function recon_histology()
 {
+  local id block skip_reg args
+
   # What specimen and block are we doing this for?
-  read -r id block args <<< "$@"
+  read -r id block skip_reg args <<< "$@"
 
   # Make sure data is synced. NOTE: this is slowing things down. Run by hand
   ### rsync_histo_proc $id
@@ -1093,27 +1170,21 @@ function recon_histology()
     fi
 
     # Get the path to the MRI-like histology slide
-    local IS_LEADER=$(echo "$stain" | sed -e "s/NISSL/1/g" -e "s/^[^1].*$/0/")
-    echo $svs $ZPOS $IS_LEADER $SLIDE_TEARFIX $SLIDE_MASK >> $HISTO_RECON_MANIFEST
+    echo $svs $ZPOS 1 $SLIDE_TEARFIX $SLIDE_MASK >> $HISTO_RECON_MANIFEST
 
     # Add to the nissl manifest
-    if [[ $stain == "NISSL" ]]; then
-      echo $svs $SLIDE_RGB >> $HISTO_NISSL_RGB_SPLAT_MANIFEST
-      echo $svs $SLIDE_TEARFIX >> $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
-      echo $ZPOS >> $NISSL_ZRANGE
+    echo $svs $SLIDE_RGB >> $HISTO_NISSL_RGB_SPLAT_MANIFEST
+    echo $svs $SLIDE_TEARFIX >> $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
+    echo $svs $ZPOS >> $NISSL_ZRANGE
 
-      # Check if there is a registration validation tracing for this slide
-      # svs_regval=$(find $SPECIMEN_HISTO_REGVAL_ROOT -name "*__${svs}.png")
-      local svs_regval=$(ls "$SPECIMEN_HISTO_REGVAL_ROOT/*__${svs}.png")
-      if [[ $svs_regval && -f $svs_regval ]]; then
-        echo $svs $svs_regval >> $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
-      fi
+    # Check if there is a registration validation tracing for this slide
+    if [[ -f $SLIDE_REGEVAL_PNG ]]; then
+      echo $svs $SLIDE_REGEVAL_PNG >> $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
+    fi
 
-      # Check if there is an annotation validation tracing for this slide
-      local svs_annot="$HISTO_ANNOT_DIR/${svs}_annot.png"
-      if [[ -f $svs_annot ]]; then
-        echo $svs $svs_annot >> $HISTO_ANNOT_SPLAT_MANIFEST
-      fi
+    # Check if there is an annotation validation tracing for this slide
+    if [[ -f $SLIDE_ANNOT_PNG ]]; then
+      echo $svs $SLIDE_ANNOT_PNG >> $HISTO_ANNOT_SPLAT_MANIFEST
     fi
 
   done < $HISTO_MATCH_MANIFEST
@@ -1130,42 +1201,55 @@ function recon_histology()
     return
   fi
 
-  # Run processing with stack_greedy
-  stack_greedy init -M $HISTO_RECON_MANIFEST -gm $HISTO_RECON_DIR
+  if [[ $skip_reg -eq 1 ]]; then
+    echo "Skipping registration"
+  else
 
-  # Jan 2020: the zeps=4 value seems to work better for the NCC metric, the
-  # previously used value of 0.5 ended up having lots of slices skipped. But
-  # need to doublecheck that this does not hurt other registrations
-  stack_greedy recon -z 1.6 4.0 \
-    -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
+<<'SKIP'
+    # Run processing with stack_greedy
+    stack_greedy init -M $HISTO_RECON_MANIFEST -gm $HISTO_RECON_DIR
 
-  stack_greedy volmatch -i $BFVIS_MRILIKE \
-    -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
+    # Jan 2020: the zeps=4 value seems to work better for the NCC metric, the
+    # previously used value of 0.5 ended up having lots of slices skipped. But
+    # need to doublecheck that this does not hurt other registrations
+    stack_greedy recon -z 1.6 4.0 \
+      -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy voliter -R 1 10 -na 10 -nd 10 -w 0.5 -wdp \
-    -m NCC 8x8 -n 100x40x10 $HISTO_RECON_DIR
+    stack_greedy volmatch -i $BFVIS_MRILIKE \
+      -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
 
-  stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
-    -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm $HISTO_RECON_DIR
+    stack_greedy voliter -R 1 10 -na 10 -nd 10 -w 0.5 -wdp \
+      -m NCC 8x8 -n 100x40x10 $HISTO_RECON_DIR
 
-  # Now run stack_greedy against the MRI volume. We use the results of the
-  # last affine stage to prime
-  stack_greedy voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
+    stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
+      -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm $HISTO_RECON_DIR
 
-  # We are using the result of iteration 10 to start the MRI registration
-  stack_greedy voliter -R 21 30 -k 10 -na 10 -nd 20 -w 4.0 -wdp \
-    -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm \
-    -i mri $HISTO_RECON_DIR
+    # Now run stack_greedy against the MRI volume. We use the results of the
+    # last affine stage to prime
+    stack_greedy voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
+SKIP
+
+    # We are using the result of iteration 20 to start the MRI registration
+    stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 0.5 -wdp \
+      -m NCC 8x8 -n 80x80 -s 3.0mm 1.0mm -sv-incompr -mm \
+      -i mri $HISTO_RECON_DIR
+  fi
 
   # Splat the NISSL slides if they are available
-  local nissl_z0=$(cat $NISSL_ZRANGE | sort -n | head -n 1)
-  local nissl_z1=$(cat $NISSL_ZRANGE | sort -n | tail -n 1)
+  local nissl_z0=$(cat $NISSL_ZRANGE | awk '{print $2}' | sort -n | head -n 1)
+  local nissl_z1=$(cat $NISSL_ZRANGE | awk '{print $2}' | sort -n | tail -n 1)
   local nissl_zstep=0.5
+
+  # For each slice record its physical and ordinal position
+  rm -rf $HISTO_NISSL_SPLAT_ZPOS_FILE
+  while read -r svs zpos; do
+    local zidx=$(printf '%.f' $(echo "($zpos - $nissl_z0) / $nissl_zstep" | bc))
+    echo $svs $zidx $zpos >> $HISTO_NISSL_SPLAT_ZPOS_FILE
+  done < $NISSL_ZRANGE
 
   # Create a reference space for splatting. This reference space has
   # higher resolution than the original blockface images to allow better
   # histology visualization and crisper annotations
-
 
   # Perform splatting at different stages
   local SPLAT_STAGES="recon volmatch voliter-10 voliter-20 voliter-30"
@@ -1188,7 +1272,8 @@ function recon_histology()
       stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
         -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
         -S exact -ztol 0.2 -si 3.0 \
-        -H -M $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+        -H -M $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST \
+        -ri NEAREST -rb 0.0 $HISTO_RECON_DIR
     fi
 
   done
@@ -1201,7 +1286,18 @@ function recon_histology()
       -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
       -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_ANNOT_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+
+    # Reslice the PHG segmentation into the splat space for Sydney to
+    # be able to do segmentations
+    if [[ -f $HIRES_MRI_MANUAL_PHGSEG ]]; then
+      greedy -d 3 \
+        -rf $OUT -ri LABEL 0.04mm \
+        -rm $HIRES_MRI_MANUAL_PHGSEG $HISTO_NISSL_SPLAT_HIRES_MRI_PHGSEG \
+        -r $HIRES_TO_BFVIS_WARP_FULL $HIRES_MRI_MANUAL_PHGSEG_AFFINE,1
+    fi
+
   fi
+
 
   # Create a blockface reference image that has the same dimensions as the
   # splatted images. This will be used to extract edges
@@ -1231,6 +1327,97 @@ function recon_histology()
     -o $HISTO_NISSL_SPLAT_WORKSPACE
 }
 
+function compute_regeval_metrics()
+{
+  local id block args svs
+
+  # What specimen and block are we doing this for?
+  read -r id block args <<< "$@"
+  set_block_vars $id $block
+
+  # Is there anything to evaluate on?
+  if [[ ! -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST ]]; then return; fi
+  if [[ ! -f $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED ]]; then return; fi
+
+  # Extract the MRI-space surfaces for this block
+  local MRI_CONTOUR_MASK=$TMPDIR/mri_contour_mask.nii.gz
+  c3d $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED -as A \
+    -replace 2 1 3 1 4 1 -thresh 1 1 1 0 -dilate 1 3x3x0 \
+    -push A -thresh 6 6 1 0 -dilate 1 3x3x0 -times \
+    -o $MRI_CONTOUR_MASK \
+
+  local MRI_CONTOUR_SRC=$TMPDIR/mri_contour_source.nii.gz
+  c3d $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
+    -replace 5 0 2 1 3 1 4 1 6 2 -o $MRI_CONTOUR_SRC
+
+  local MRI_CONTOUR_LABEL=$TMPDIR/mri_contour_label.nii.gz
+  c3d $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
+    -replace 0 5 6 5 -split \
+    -foreach -smooth-fast 2x2x0.01mm -endfor \
+    -scale 0 -merge -o $MRI_CONTOUR_LABEL
+
+  # Exctract the contour
+  local MRI_CONTOUR_V1=$TMPDIR/mri_contour_v1.vtk
+  vtklevelset $MRI_CONTOUR_SRC $MRI_CONTOUR_V1 1.5
+
+  # Mask the contour
+  local MRI_CONTOUR_V2=$TMPDIR/mri_contour_v2.vtk
+  mesh_image_sample -t 1.0 1.5 $MRI_CONTOUR_V1 $MRI_CONTOUR_MASK $MRI_CONTOUR_V2 Mask
+
+  # Label separate contours
+  mesh_image_sample $MRI_CONTOUR_V2 $MRI_CONTOUR_LABEL $HISTO_REGEVAL_MRI_MESH Label
+
+  # Go over splat stages
+  local SPLAT_STAGES="volmatch voliter-10 voliter-20 voliter-30"
+  for STAGE in $SPLAT_STAGES; do
+
+    # Create directory for evaluation
+    local WDIR=$HISTO_REGEVAL_METRIC_DIR/$STAGE
+    mkdir -p $WDIR
+
+    local SPLAT="$(printf $HISTO_NISSL_REGEVAL_SPLAT_PATTERN $STAGE)"
+    if [[ ! -f $SPLAT ]]; then continue; fi
+
+    # Generate the VTK for this
+    local HIST_CONTOUR_MASK=$TMPDIR/hist_contour_mask_$STAGE.nii.gz
+    c3d $SPLAT -dup -thresh 30 inf 1 0 -dilate 0 3x3x0 -o $HIST_CONTOUR_MASK
+
+    local HIST_CONTOUR_V1=$TMPDIR/hist_contour_v1.vtk
+    vtklevelset $SPLAT $HIST_CONTOUR_V1 65
+
+    local HIST_CONTOUR_V2=$(printf $HISTO_REGEVAL_HIST_MESH_PATTERN $STAGE)
+    mesh_image_sample -t 0.5 2.0 $HIST_CONTOUR_V1 $HIST_CONTOUR_MASK $HIST_CONTOUR_V2 Mask
+
+    # Find all slices with histology curves
+    for svs in $(cat $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST | awk '{print $1}'); do
+
+      # Get the slice index in the splat volume of the histology slide
+      local sidx=$(cat $HISTO_NISSL_SPLAT_ZPOS_FILE | awk -v x="$svs" '$1==x {print $2}')
+
+      local hst_slide=$WDIR/${svs}_${STAGE}_histo_slide.nii.gz
+      local mri_slide=$WDIR/${svs}_${STAGE}_mri_slide.nii.gz
+
+      # Extract the histology slide
+      c3d $SPLAT -slice z $sidx -o $hst_slide
+
+      # Extractt the MRI slide
+      c3d $hst_slide $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
+        -reslice-identity -o $mri_slide
+
+      # Run the script
+      local metric_output=$WDIR/${svs}_${STAGE}_metric.json
+      if ! python $ROOT/scripts/curve_metric.py $mri_slide $hst_slide > $metric_output; then
+        echo "Failed to get metric for $id $block $STAGE $svs"
+      fi
+    done
+  done
+
+}
+
+
+
+
+
 function preproc_histology_all()
 {
   # Read an optional regular expression from command line
@@ -1259,6 +1446,9 @@ function recon_histo_all()
   # Read an optional regular expression from command line
   REGEXP=$1
 
+  # TODO: this is dangerous, remove!
+  skip_reg=$2
+
   # Process the individual blocks
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
 
@@ -1268,13 +1458,38 @@ function recon_histo_all()
     # Submit the jobs
     qsub $QSUBOPT -N "recon_histo_${id}_${block}" \
       -l h_vmem=8G -l s_vmem=8G \
-      $0 recon_histology $id $block
+      $0 recon_histology $id $block $skip_reg
 
   done
 
   # Wait for completion
   qsub $QSUBOPT -b y -sync y -hold_jid "recon_histo_*" /bin/sleep 0
 }
+
+
+function compute_regeval_metrics_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Create the manifest for this block
+    pull_histo_match_manifest $id $block
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "metrics_histo_${id}_${block}" \
+      -l h_vmem=16G -l s_vmem=16G \
+      $0 compute_regeval_metrics $id $block
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "metrics_histo_*" /bin/sleep 0
+
+}
+
 
 # ---------------------------------------------------
 # PREPARE matrices for sending to the GCP for display
@@ -1860,6 +2075,75 @@ function merge_splat_all()
 }
 
 
+# Generic function to download an SVG from PHAS and convert it to a PNG
+# usage:
+#   download_svg <task_id> <svs> <wdir>
+# environment variables:
+#   SVG_CURL_OPTS: options to pass curl
+function download_svg()
+{
+  local task_id svs WDIR
+
+  # Read the inputs
+  read -r task_id svs WDIR <<< "$@"
+
+  # Get the timestamp of the annotation
+  local TS_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/timestamp"
+  local TS_REMOTE_JSON=$(curl -ksf $TS_URL)
+  local TS_REMOTE=$(echo $TS_REMOTE_JSON | jq .timestamp)
+
+  # The different filenames that will be output by this function
+  local LOCAL_SVG=$WDIR/${svs}_annot.svg
+  local LOCAL_PNG=$WDIR/${svs}_annot.png
+  local LOCAL_TIMESTAMP_JSON=$WDIR/${svs}_timestamp.json
+
+    # If there is nothing on the server, clean up locally and stop
+    if [[ $TS_REMOTE == "null" ]]; then
+      rm -f $LOCAL_SVG $LOCAL_TIMESTAMP_JSON $LOCAL_PNG
+      return
+    fi
+
+    # Does the SVG exist? Then check if it is current
+    if [[ -f $LOCAL_SVG ]]; then
+      local TS_LOCAL
+      if [[ -f $LOCAL_TIMESTAMP_JSON ]]; then
+        TS_LOCAL=$(cat $LOCAL_TIMESTAMP_JSON | jq .timestamp)
+      else
+        TS_LOCAL=0
+      fi
+
+      if [[ $(echo "$TS_REMOTE > $TS_LOCAL" | bc) -eq 1 ]]; then
+        rm -f $LOCAL_SVG
+      else
+        echo "File $LOCAL_SVG is up to date"
+      fi
+    fi
+
+    if [[ ! -f $LOCAL_SVG ]]; then
+      # Download the SVG
+      local SVG_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/svg"
+      if ! curl -ksfo $LOCAL_SVG $SVG_CURL_OPTS $SVG_URL; then
+        echo "Unable to download $LOCAL_SVG"
+        return
+      fi
+
+      # Record the timestamp
+      echo $TS_REMOTE_JSON > $LOCAL_TIMESTAMP_JSON
+
+      # Make sure the PNG gets generated
+      rm -f $LOCAL_PNG
+    fi
+
+    # Now that we have the SVG, convert it to PNG format. No need to fix it
+    # to a given size, that will happen later during splatting
+    if [[ ! -f $LOCAL_PNG ]]; then
+      convert -density 2 -depth 8 $LOCAL_SVG \
+        -set colorspace Gray -separate -average -negate \
+        $LOCAL_PNG
+    fi
+}
+
+
 # Get the slide annotations in SVG format from the server and map them to a
 # format that can be used during annotation
 function rsync_histo_annot()
@@ -1871,7 +2155,7 @@ function rsync_histo_annot()
   set_block_vars $id $block
 
   # Create directories
-  mkdir -p $HISTO_ANNOT_DIR
+  mkdir -p $HISTO_ANNOT_DIR $HISTO_REGEVAL_DIR
 
   # Read the slide manifest
   while IFS=, read -r svs stain dummy section slice args; do
@@ -1879,64 +2163,19 @@ function rsync_histo_annot()
     # Set the variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
 
-    # Annotation is performed only on NISSL slides
-    if [[ $stain != "NISSL" ]]; then
-      continue
-    fi
+    # Get the registration evaluation annotations
+    SVG_CURL_OPTS="-d strip_width=1000"
+    download_svg $PHAS_REGEVAL_TASK $svs $HISTO_REGEVAL_DIR
 
-    # Get the timestamp of the annotation
-    local TS_URL="$PHAS_SERVER/api/task/$PHAS_ANNOT_TASK/slidename/$svs/annot/timestamp"
-    local TS_REMOTE_JSON=$(curl -ksf $TS_URL)
-    local TS_REMOTE=$(echo $TS_REMOTE_JSON | jq .timestamp)
+    # Anatomical annotation is performed only on NISSL slides
+    if [[ $stain != "NISSL" ]]; then continue; fi
 
-    # If there is nothing on the server, clean up locally and stop
-    if [[ $TS_REMOTE == "null" ]]; then
-      rm -f $SLIDE_ANNOT_SVG $SLIDE_ANNOT_TIMESTAMP $SLIDE_ANNOT_PNG
-      continue
-    fi
-
-    # Does the SVG exist? Then check if it is current
-    if [[ -f $SLIDE_ANNOT_SVG ]]; then
-      local TS_LOCAL
-      if [[ -f $SLIDE_ANNOT_TIMESTAMP ]]; then
-        TS_LOCAL=$(cat $SLIDE_ANNOT_TIMESTAMP | jq .timestamp)
-      else
-        TS_LOCAL=0
-      fi
-
-      if [[ $(echo "$TS_REMOTE > $TS_LOCAL" | bc) -eq 1 ]]; then
-        rm -f $SLIDE_ANNOT_SVG
-      else
-        echo "File $SLIDE_ANNOT_SVG is up to date"
-      fi
-    fi
-
-    if [[ ! -f $SLIDE_ANNOT_SVG ]]; then
-      # Download the SVG
-      local SVG_URL="$PHAS_SERVER/api/task/$PHAS_ANNOT_TASK/slidename/$svs/annot/svg"
-      if ! curl -ksfo $SLIDE_ANNOT_SVG -d stroke_width=250 -d font_size=2000px -d font_color=darkgray $SVG_URL; then
-        echo "Unable to download $SLIDE_ANNOT_SVG"
-        continue
-      fi
-
-      # Record the timestamp
-      echo $TS_REMOTE_JSON > $SLIDE_ANNOT_TIMESTAMP
-
-      # Make sure the PNG gets generated
-      rm -f $SLIDE_ANNOT_PNG
-    fi
-
-    # Now that we have the SVG, convert it to PNG format. No need to fix it
-    # to a given size, that will happen later during splatting
-    if [[ ! -f $SLIDE_ANNOT_PNG ]]; then
-      convert -density 2 -depth 8 $SLIDE_ANNOT_SVG \
-        -set colorspace Gray -separate -average -negate \
-        $SLIDE_ANNOT_PNG
-    fi
+    # Download the SVG with appropriate settings
+    SVG_CURL_OPTS="-d stroke_width=250 -d font_size=2000px -d font_color=darkgray"
+    download_svg $PHAS_ANNOT_TASK $svs $HISTO_ANNOT_DIR
 
   done < $HISTO_MATCH_MANIFEST
 }
-
 
 function rsync_histo_annot_all()
 {
