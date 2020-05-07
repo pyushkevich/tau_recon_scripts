@@ -252,6 +252,7 @@ function set_block_vars()
   HISTO_ANNOT_DIR=$ROOT/work/$id/annot/$block
   HISTO_ANNOT_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_manifest.txt
   HISTO_ANNOT_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_%s.nii.gz
+  HISTO_ANNOT_HIRES_MRI=$HISTO_SPLAT_DIR/${id}_${block}_annot_mri_hires.nii.gz
 
   # Directory for registation validation curves from histology
   HISTO_REGEVAL_DIR=$ROOT/work/$id/regeval/$block
@@ -269,6 +270,9 @@ function set_block_vars()
 
   # Manual segmentation of the PHG in the splat space, for editing
   HISTO_NISSL_SPLAT_HIRES_MRI_PHGSEG=$HISTO_SPLAT_DIR/${id}_${block}_nissl_splat_hires_mri_phgseg_multilabel.nii.gz
+
+  # Workspace for subsequent manual annotation
+  HISTO_NISSL_BASED_MRI_SEGMENTATION_WORKSPACE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_based_mri_seg.itksnap
 
   # Files exported to the segmentation server. These should be stored in a convenient
   # to copy location 
@@ -1205,6 +1209,11 @@ function recon_histology()
     echo "Skipping registration"
   else
 
+    # TODO: this is for now only!
+    if [[ ! -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST ]]; then
+      return
+    fi
+
 <<'SKIP'
     # Run processing with stack_greedy
     stack_greedy init -M $HISTO_RECON_MANIFEST -gm $HISTO_RECON_DIR
@@ -1224,15 +1233,25 @@ function recon_histology()
     stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
       -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm $HISTO_RECON_DIR
 
+SKIP
+
     # Now run stack_greedy against the MRI volume. We use the results of the
     # last affine stage to prime
     stack_greedy voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
-SKIP
 
     # We are using the result of iteration 20 to start the MRI registration
     stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 0.5 -wdp \
       -m NCC 8x8 -n 80x80 -s 3.0mm 1.0mm -sv-incompr -mm \
       -i mri $HISTO_RECON_DIR
+
+    # RUN 2
+    # Try a more aggressive registration (?)
+    # stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 0.5 -wdp \
+    #   -m NCC 8x8 -n 80x80 -s 2.0mm 0.2mm -sv-incompr -mm \
+    #   -i mri $HISTO_RECON_DIR
+    # stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 0.5 -wdp \
+    #  -m NCC 16x16 -n 80x80 -s 2.0mm 0.5mm -mm \
+    #  -i mri $HISTO_RECON_DIR
   fi
 
   # Splat the NISSL slides if they are available
@@ -1250,6 +1269,8 @@ SKIP
   # Create a reference space for splatting. This reference space has
   # higher resolution than the original blockface images to allow better
   # histology visualization and crisper annotations
+
+<<'TMPSKIP'
 
   # Perform splatting at different stages
   local SPLAT_STAGES="recon volmatch voliter-10 voliter-20 voliter-30"
@@ -1278,22 +1299,45 @@ SKIP
 
   done
 
+TMPSKIP
+
   # The remaining splats should only use the last stage
   STAGE=voliter-30
   if [[ -f $HISTO_ANNOT_SPLAT_MANIFEST ]]; then
     local OUT="$(printf $HISTO_ANNOT_SPLAT_PATTERN $STAGE)"
+
+<<'dfdfd'
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
       -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
       -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_ANNOT_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+dfdfd
 
     # Reslice the PHG segmentation into the splat space for Sydney to
     # be able to do segmentations
     if [[ -f $HIRES_MRI_MANUAL_PHGSEG ]]; then
+<<'JSJSJS'
       greedy -d 3 \
         -rf $OUT -ri LABEL 0.04mm \
         -rm $HIRES_MRI_MANUAL_PHGSEG $HISTO_NISSL_SPLAT_HIRES_MRI_PHGSEG \
-        -r $HIRES_TO_BFVIS_WARP_FULL $HIRES_MRI_MANUAL_PHGSEG_AFFINE,1
+        -r $HIRES_TO_BFVIS_WARP_FULL $HIRES_MRI_MANUAL_PHGSEG_AFFINE,-1
+
+      c3d $OUT $HIRES_MRI_TO_BFVIS_WARPED \
+        -reslice-identity -o $HISTO_ANNOT_HIRES_MRI
+JSJSJS
+
+      # Create a workspace just for segmentation purposes
+      mkdir -p $ROOT/tmp/man_seg/${id}_${block}
+      itksnap-wt \
+        -lsm $HISTO_ANNOT_HIRES_MRI -psn "${id}_${block} 9.4T MRI" -props-set-contrast LINEAR 0 0.5 \
+        -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE)" \
+        -psn "${id}_${block} NISSL" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+        -laa $OUT -psn "${id}_${block} Annotation" \
+        -las $HISTO_NISSL_SPLAT_HIRES_MRI_PHGSEG \
+        -labels-set $ROOT/scripts/man_seg_itksnap.txt \
+        -o $HISTO_NISSL_BASED_MRI_SEGMENTATION_WORKSPACE \
+        -a $ROOT/tmp/man_seg/${id}_${block}/${id}_${block}_man_seg.itksnap
+
     fi
 
   fi
@@ -1325,6 +1369,7 @@ SKIP
     -laa $BFVIS_RGB -psn "Blockface" -props-set-contrast LINEAR 0.0 0.5 -props-set-mcd rgb \
     -las $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES \
     -o $HISTO_NISSL_SPLAT_WORKSPACE
+
 }
 
 function compute_regeval_metrics()

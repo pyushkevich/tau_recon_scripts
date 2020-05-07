@@ -269,6 +269,69 @@ function density_map_all()
 }
 
 
+# Compute Tau density (or similar map) for all slides in a specimen
+# Inputs are:
+#   id (specimen id)
+#   stain (Tau, NAB, etc)
+#   model (e.g., tangles)
+#   force (if set, clobber existing results)
+function nissl_multichannel_specimen()
+{
+  read -r id force args <<< "$@"
+
+  # Get the list of slides that are eligible
+  SVSLIST=$(get_specimen_manifest_slides $id NISSL)
+
+  # Get a full directory dump
+  FREMOTE=$(mktemp /tmp/dmap-remote-list.XXXXXX)
+  gsutil ls "gs://mtl_histology/$id/histo_proc/**" > $FREMOTE
+
+  # Check for existence of all remote files
+  for svs in $SVSLIST; do
+
+    # Define the outputs
+    BASE="gs://mtl_histology/$id/histo_proc/${svs}"
+    NII="${BASE}/${svs}_deepcluster.nii.gz"
+    THUMB="${BASE}/preproc/${svs}_thumbnail.tiff"
+
+    # Check that preprocessing has been run for this slide
+    if ! grep "$THUMB" $FREMOTE > /dev/null; then
+      echo "Slide ${svs} has not been preprocessed yet. Skipping"
+      continue
+    fi
+
+    # Check if the result already exists
+    if [[ ! $force || $force -eq 0 ]] && grep "$NII" $FREMOTE > /dev/null; then
+      echo "Result already exists for slide ${svs}. Skipping"
+      continue
+    fi
+
+    # Geberate a job ID and YAML file
+    JOB=$(echo $id $svs | md5sum | cut -c 1-6)
+    YAML=/tmp/density_${JOB}.yaml
+
+    # Do YAML substitution
+    cat $ROOT/scripts/yaml/nissl_multichan.template.yaml | \
+      sed -e "s/%ID%/${id}/g" -e "s/%JOBID%/${JOB}/g" -e "s/%SVS%/${svs}/g" \
+      > $YAML
+
+    # Run the yaml
+    echo "Scheduling job $id $svs $YAML"
+    kube apply -f $YAML
+
+  done
+}
+
+function nissl_multichannel_all()
+{
+  read -r force args <<< "$@"
+  for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
+    nissl_multichannel_specimen $id $force
+  done
+}
+
+
+
 # Main entrypoint into script
 COMMAND=$1
 if [[ ! $COMMAND ]]; then

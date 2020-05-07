@@ -37,13 +37,19 @@ if __name__ == "__main__":
     # Find the longest contour (this is weak)
     h_idx = list(map(len, h_cnt)).index(max(list(map(len, h_cnt))))
 
-    # Finf the MRI cutoff
+    # Find the label on this slice
+    label = int(np.round(
+        scipy.stats.mode(mri.flatten()[np.logical_and(mri.flatten() >= 0.5, mri.flatten() <= 4.5)]).mode[0]))
     m_flat = mri.flatten()
-    m_thresh = scipy.stats.mode(m_flat[np.logical_and(m_flat > 0, m_flat < 5)]).mode[0]
 
     # Extract contours from MRI
-    m_mask = morph.binary_erosion(mri < 4.5, morph.disk(5))
-    m_cnt = measure.find_contours(mri, m_thresh / 2, mask=m_mask);
+    m_mask = np.logical_and(
+        np.logical_and(
+            morph.binary_dilation(mri == label, morph.disk(9)),
+            morph.binary_dilation(mri == 6, morph.disk(9))),
+        morph.binary_erosion(mri != 5, morph.disk(9)))
+
+    m_cnt = measure.find_contours(mri, (6 + label) / 2.0, mask=m_mask)
     if len(m_cnt) < 1:
         eprint("No contours in MRI: %d" % (len(m_cnt),))
         sys.exit(-1)
@@ -64,6 +70,7 @@ if __name__ == "__main__":
 
     # Compute some standard metrics
     mtx = {
+        "label": label,
         "bde_median": np.mean((np.median(d1), np.median(d2))),
         "bde_mad": np.mean((np.mean(d1), np.mean(d2))),
         "bde_rms": np.sqrt(np.mean((np.mean(d1**2), np.mean(d2**2)))),
