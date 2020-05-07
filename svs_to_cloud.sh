@@ -6,7 +6,7 @@
 # ----------------------------------------------------
 
 # Globals
-ROOT=/data/picsl/pauly/tau_atlas
+ROOT=${ROOT:-/data/picsl/pauly/tau_atlas}
 MDIR=$ROOT/manifest
 
 # Run kubectl with additional options
@@ -265,6 +265,27 @@ function density_map_all()
   read -r stain model force args <<< "$@"
   for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
     density_map_specimen $id ${stain?} ${model?} $force
+  done
+}
+
+function blockface_preprocess_specimen()
+{
+    read -r id args <<< "$@"
+
+    JOB=$(echo $id | md5sum | cut -c 1-6)
+    YAML=/tmp/blockface_${JOB}.yaml
+    cat $ROOT/scripts/yaml/blockface_preproc.template.yaml | \
+      sed -e "s/%ID%/${id}/g" -e "s/%JOBID%/${JOB}/g" > $YAML
+
+    # Run the yaml
+    echo "Scheduling job $ID $YAML"
+    kube apply -f $YAML
+}
+
+function blockface_preprocess_all()
+{
+  for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
+    blockface_preprocess_specimen $id 
   done
 }
 
