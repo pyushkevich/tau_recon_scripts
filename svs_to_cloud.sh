@@ -6,7 +6,7 @@
 # ----------------------------------------------------
 
 # Globals
-ROOT=${ROOT:-/data/picsl/pauly/tau_atlas}
+ROOT=/data/picsl/pauly/tau_atlas
 MDIR=$ROOT/manifest
 
 # Run kubectl with additional options
@@ -285,7 +285,7 @@ function blockface_preprocess_specimen()
 function blockface_preprocess_all()
 {
   for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
-    blockface_preprocess_specimen $id 
+    blockface_preprocess_specimen $id
   done
 }
 
@@ -312,7 +312,7 @@ function nissl_multichannel_specimen()
 
     # Define the outputs
     BASE="gs://mtl_histology/$id/histo_proc/${svs}"
-    NII="${BASE}/${svs}_deepcluster.nii.gz"
+    NII="${BASE}/preproc/${svs}_deepcluster.nii.gz"
     THUMB="${BASE}/preproc/${svs}_thumbnail.tiff"
 
     # Check that preprocessing has been run for this slide

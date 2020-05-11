@@ -239,6 +239,9 @@ function set_block_vars()
   HISTO_MATCH_MANIFEST=$HISTO_REG_DIR/match_manifest.txt
   HISTO_RECON_MANIFEST=$HISTO_REG_DIR/recon_manifest.txt
 
+  # Manifest of Deepcluster based MRI-like images
+  HISTO_DEEPCLUSTER_MRILIKE_MANIFEST=$HISTO_REG_DIR/dc2mri_manifest.txt
+
   # Location where stack_greedy is run
   HISTO_RECON_DIR=$HISTO_REG_DIR/recon
 
@@ -355,18 +358,16 @@ function set_block_density_vars()
   set +vx; eval $tracestate
 }
 
-# Set variables for a histology slice. 
-function set_ihc_slice_vars()
+
+# Set variables for a generic histology slice (only given by svs).
+function set_histo_common_slice_vars()
 {
   # Don't trace inside of set functions
   local tracestate=$(shopt -po xtrace); set +x
 
   # Read the slice parameters
-  local id block svs stain section slice args
-  read -r id block svs stain section slice args <<< "$@"
-
-  # Generate a unique slide id (with all information of this slide)
-  SLIDE_ID=$(printf %s_%s_%s_%03d_%02d $id $block $stain $section $slice)
+  local id block svs args
+  read -r id block svs args <<< "$@"
 
   # Local preproc directory for the slide
   SLIDE_LOCAL_PREPROC_DIR=$SPECIMEN_HISTO_LOCAL_ROOT/$svs/preproc
@@ -376,6 +377,7 @@ function set_ihc_slice_vars()
 
   # The location of the tear-fixed slide
   SLIDE_TEARFIX=$SLIDE_LOCAL_PREPROC_DIR/${svs}_tearfix.nii.gz
+  SLIDE_DEEPCLUSTER=$SLIDE_LOCAL_PREPROC_DIR/${svs}_deepcluster.nii.gz
 
   # The location of the RGB thumbnail
   SLIDE_THUMBNAIL=$SLIDE_LOCAL_PREPROC_DIR/${svs}_thumbnail.tiff
@@ -389,12 +391,50 @@ function set_ihc_slice_vars()
   # Nifti file generated from thumbnail that matches the tearfix file
   SLIDE_RGB=$SLIDE_WORK_DIR/${svs}_rgb.nii.gz
 
-  # Random forest file for this
-  SLIDE_MASK_GLOBAL_RFTRAIN=$ROOT/manual/common/slide_mask_rf_${stain}.dat
-  
+  # MRI-like derived from deepcluster (features to mri fitting)
+  SLIDE_DEEPCLUSTER_MRILIKE=$SLIDE_WORK_DIR/${svs}_dc_mrilike.nii.gz
+
   # Mask generated from the RGB file
   SLIDE_MASK=$SLIDE_WORK_DIR/${svs}_mask.nii.gz
 
+  # Google cloud destinations for stuff that goes there
+  GSURL_RECON_BASE=gs://mtl_histology/${id}/histo_proc/${svs}/recon
+  SLIDE_RAW_AFFINE_MATRIX_GSURL=$GSURL_RECON_BASE/${svs}_recon_iter10_affine.mat
+
+  # The name of the annotation SVG file and timestamp (don't change, filename hardcoded in download_svg)
+  SLIDE_ANNOT_SVG=$HISTO_ANNOT_DIR/${svs}_annot.svg
+  SLIDE_ANNOT_PNG=$HISTO_ANNOT_DIR/${svs}_annot.png
+  SLIDE_ANNOT_TIMESTAMP=$HISTO_ANNOT_DIR/${svs}_timestamp.json
+
+  # The name of the registration evaluation SVG file and timestamp (don't change, filename hardcoded in download_svg)
+  SLIDE_REGEVAL_SVG=$HISTO_REGEVAL_DIR/${svs}_annot.svg
+  SLIDE_REGEVAL_PNG=$HISTO_REGEVAL_DIR/${svs}_annot.png
+  SLIDE_REGEVAL_TIMESTAMP=$HISTO_REGEVAL_DIR/${svs}_timestamp.json
+
+  # Restore trace state
+  set +vx; eval $tracestate
+}
+
+
+# Set variables for a histology slice. 
+function set_ihc_slice_vars()
+{
+  # Don't trace inside of set functions
+  local tracestate=$(shopt -po xtrace); set +x
+
+  # Read the slice parameters
+  local id block svs stain section slice args
+  read -r id block svs stain section slice args <<< "$@"
+
+  # Set the common variables
+  set_histo_common_slice_vars $id $block $svs
+
+  # Generate a unique slide id (with all information of this slide)
+  SLIDE_ID=$(printf %s_%s_%s_%03d_%02d $id $block $stain $section $slice)
+
+  # Random forest file for this
+  SLIDE_MASK_GLOBAL_RFTRAIN=$ROOT/manual/common/slide_mask_rf_${stain}.dat
+  
   # Long name of the slide
   SLIDE_LONG_NAME=$(printf "%s_%s_%02d_%02d_%s" $id $block $section $slice $stain)
 
@@ -415,20 +455,6 @@ function set_ihc_slice_vars()
   # Resliced evaluation curves
   SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_GLOBAL=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_reslice_regeval_global.nii.gz
   SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_CHUNKING=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_reslice_regeval_chunking.nii.gz
-
-  # Google cloud destinations for stuff that goes there
-  GSURL_RECON_BASE=gs://mtl_histology/${id}/histo_proc/${svs}/recon
-  SLIDE_RAW_AFFINE_MATRIX_GSURL=$GSURL_RECON_BASE/${svs}_recon_iter10_affine.mat
-
-  # The name of the annotation SVG file and timestamp (don't change, filename hardcoded in download_svg)
-  SLIDE_ANNOT_SVG=$HISTO_ANNOT_DIR/${svs}_annot.svg
-  SLIDE_ANNOT_PNG=$HISTO_ANNOT_DIR/${svs}_annot.png
-  SLIDE_ANNOT_TIMESTAMP=$HISTO_ANNOT_DIR/${svs}_timestamp.json
-
-  # The name of the registration evaluation SVG file and timestamp (don't change, filename hardcoded in download_svg)
-  SLIDE_REGEVAL_SVG=$HISTO_REGEVAL_DIR/${svs}_annot.svg
-  SLIDE_REGEVAL_PNG=$HISTO_REGEVAL_DIR/${svs}_annot.png
-  SLIDE_REGEVAL_TIMESTAMP=$HISTO_REGEVAL_DIR/${svs}_timestamp.json
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -991,7 +1017,7 @@ function rsync_histo_proc()
   # Create some exclusions
   local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*affine\.mat|.*densitymap\.tiff"
   mkdir -p $SPECIMEN_HISTO_LOCAL_ROOT
-  gsutil rsync -R -x "$EXCL" $SPECIMEN_HISTO_GCP_ROOT/ $SPECIMEN_HISTO_LOCAL_ROOT/
+  gsutil -m rsync -R -x "$EXCL" $SPECIMEN_HISTO_GCP_ROOT/ $SPECIMEN_HISTO_LOCAL_ROOT/
 }
 
 function rsync_histo_all()
@@ -1127,6 +1153,7 @@ function recon_histology()
   rm -f $HISTO_NISSL_RGB_SPLAT_MANIFEST $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
   rm -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
   rm -f $HISTO_HISTO_ANNOT_SPLAT_MANIFEST
+  rm -f $HISTO_NISSL_DEEPCLUSTER_TO_MRI_MANIFEST
 
   # Another file to keep track of the range of NISSL files
   local NISSL_ZRANGE=$TMPDIR/nissl_zrange.txt
@@ -1150,8 +1177,8 @@ function recon_histology()
     mkdir -p $SLIDE_WORK_DIR
 
     # Make sure the preprocessing data for this slice exists, if not issue a warning
-    if [[ ! -f $SLIDE_TEARFIX ]]; then
-      echo "WARNING: missing TEARFIX file for $svs"
+    if [[ ! -f $SLIDE_TEARFIX || ! -f $SLIDE_DEEPCLUSTER ]]; then
+      echo "WARNING: missing TEARFIX or DEEPCLUSTER file for $svs"
       continue
     fi
 
@@ -1233,16 +1260,71 @@ function recon_histology()
     stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
       -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm $HISTO_RECON_DIR
 
-SKIP
-
     # Now run stack_greedy against the MRI volume. We use the results of the
     # last affine stage to prime
     stack_greedy voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
 
+    # Remap intensity from deepcluster to MRI based on the affine registration
+    # TODO: this functionality needs to be integrated into stack_greedy if it
+    # is found to work. For now though we keep it in this loop.
+    local REMAP_MANIFEST=$TMPDIR/remap_manifest.txt
+
+    rm -f $REMAP_MANIFEST
+    rm -f $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
+
+    while read -r svs args; do
+
+      # Set the variables
+      set_histo_common_slice_vars $id $block $svs
+
+      # A copy of the feature map with the NII matrix matching tearfix
+      local SLIDE_DEEPCLUSTER_MFIX=$TMPDIR/${svs}_deepcluster_mfix.nii.gz
+      local SLIDE_MRI_TO_DEEPCLUSTER=$TMPDIR/${svs}_mri_to_deepcluster.nii.gz
+      local SLIDE_MASK_TO_DEEPCLUSTER=$TMPDIR/${svs}_mask_to_deepcluster.nii.gz
+
+      # Get the dimensions of the deep cluster image
+      local DDIM=$(c2d $SLIDE_DEEPCLUSTER -info-full | grep Dimensions | sed -e "s/.*://")
+      local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq .[]))
+
+      # Fix header
+      c2d $SLIDE_TEARFIX -resample $DDIM2 -popas X \
+        -mcs $SLIDE_DEEPCLUSTER -foreach -insert X 1 -copy-transform -endfor \
+        -omc $SLIDE_DEEPCLUSTER_MFIX
+
+      # Fix mask
+      c2d $SLIDE_MASK -smooth-fast 0.04mm \
+        -resample $DDIM2 -thresh 0.5 inf 1 0 -o $SLIDE_MASK_TO_DEEPCLUSTER
+
+      # Align MRI to this resolution
+      greedy -d 2 -rf $SLIDE_MASK_TO_DEEPCLUSTER \
+        -rm $HISTO_RECON_DIR/vol/slides/alt/mri/vol_slide_mri_${svs}.nii.gz \
+            $SLIDE_MRI_TO_DEEPCLUSTER \
+        -r $HISTO_RECON_DIR/vol/iter10/affine_refvol_mov_${svs}_iter10.mat,-1
+
+      # Add line to manifest file
+      echo $SLIDE_DEEPCLUSTER_MFIX \
+           $SLIDE_MASK_TO_DEEPCLUSTER \
+           $SLIDE_MRI_TO_DEEPCLUSTER \
+           $SLIDE_DEEPCLUSTER_MRILIKE \
+           >> $REMAP_MANIFEST
+
+      # Add line to the manifest for stack_greedy
+      echo $svs $SLIDE_DEEPCLUSTER_MRILIKE >> $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
+
+    done < $HISTO_RECON_MANIFEST
+
+    # And now do the remapping
+    Rscript $ROOT/scripts/fit_multichannel.R \
+      --manifest $REMAP_MANIFEST \
+      --sfg 500 --sbg 100
+
+SKIP
+
     # We are using the result of iteration 20 to start the MRI registration
-    stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 0.5 -wdp \
-      -m NCC 8x8 -n 80x80 -s 3.0mm 1.0mm -sv-incompr -mm \
-      -i mri $HISTO_RECON_DIR
+    stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 1.0 -wdp \
+      -m NCC 8x8 -n 80x80 -s 3.0mm 0.25mm -mm \
+      -M $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST -i mri \
+      $HISTO_RECON_DIR
 
     # RUN 2
     # Try a more aggressive registration (?)
@@ -1253,6 +1335,7 @@ SKIP
     #  -m NCC 16x16 -n 80x80 -s 2.0mm 0.5mm -mm \
     #  -i mri $HISTO_RECON_DIR
   fi
+
 
   # Splat the NISSL slides if they are available
   local nissl_z0=$(cat $NISSL_ZRANGE | awk '{print $2}' | sort -n | head -n 1)
@@ -1270,26 +1353,29 @@ SKIP
   # higher resolution than the original blockface images to allow better
   # histology visualization and crisper annotations
 
-<<'TMPSKIP'
 
   # Perform splatting at different stages
-  local SPLAT_STAGES="recon volmatch voliter-10 voliter-20 voliter-30"
+  ### local SPLAT_STAGES="recon volmatch voliter-10 voliter-20 voliter-30"
+  local SPLAT_STAGES="voliter-30"
   for STAGE in $SPLAT_STAGES; do
 
-    local OUT="$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE)"
+    local OUT="$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE)"
+    stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
+      -S exact -ztol 0.2 \
+      -si 1.0 -H -M $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+
+    OUT="$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE)"
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
       -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
       -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_NISSL_RGB_SPLAT_MANIFEST -rb 255.0 $HISTO_RECON_DIR
 
-    local OUT="$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE)"
-    stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
-      -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
-      -S exact -ztol 0.2 -si 3.0 \
-      -H -M $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
+      ### -si 3.0 -H -M $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
 
     if [[ -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST ]]; then
-      local OUT="$(printf $HISTO_NISSL_REGEVAL_SPLAT_PATTERN $STAGE)"
+
+      OUT="$(printf $HISTO_NISSL_REGEVAL_SPLAT_PATTERN $STAGE)"
       stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
         -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
         -S exact -ztol 0.2 -si 3.0 \
@@ -1299,24 +1385,20 @@ SKIP
 
   done
 
-TMPSKIP
-
   # The remaining splats should only use the last stage
   STAGE=voliter-30
   if [[ -f $HISTO_ANNOT_SPLAT_MANIFEST ]]; then
     local OUT="$(printf $HISTO_ANNOT_SPLAT_PATTERN $STAGE)"
 
-<<'dfdfd'
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
       -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
       -S exact -ztol 0.2 -si 3.0 \
       -H -M $HISTO_ANNOT_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
-dfdfd
 
     # Reslice the PHG segmentation into the splat space for Sydney to
     # be able to do segmentations
     if [[ -f $HIRES_MRI_MANUAL_PHGSEG ]]; then
-<<'JSJSJS'
+
       greedy -d 3 \
         -rf $OUT -ri LABEL 0.04mm \
         -rm $HIRES_MRI_MANUAL_PHGSEG $HISTO_NISSL_SPLAT_HIRES_MRI_PHGSEG \
@@ -1324,7 +1406,6 @@ dfdfd
 
       c3d $OUT $HIRES_MRI_TO_BFVIS_WARPED \
         -reslice-identity -o $HISTO_ANNOT_HIRES_MRI
-JSJSJS
 
       # Create a workspace just for segmentation purposes
       mkdir -p $ROOT/tmp/man_seg/${id}_${block}
@@ -1420,6 +1501,9 @@ function compute_regeval_metrics()
     local WDIR=$HISTO_REGEVAL_METRIC_DIR/$STAGE
     mkdir -p $WDIR
 
+    # Remove everything in the directory to avoid keeping old results
+    rm -rf $WDIR/*
+
     local SPLAT="$(printf $HISTO_NISSL_REGEVAL_SPLAT_PATTERN $STAGE)"
     if [[ ! -f $SPLAT ]]; then continue; fi
 
@@ -1439,8 +1523,13 @@ function compute_regeval_metrics()
       # Get the slice index in the splat volume of the histology slide
       local sidx=$(cat $HISTO_NISSL_SPLAT_ZPOS_FILE | awk -v x="$svs" '$1==x {print $2}')
 
-      local hst_slide=$WDIR/${svs}_${STAGE}_histo_slide.nii.gz
-      local mri_slide=$WDIR/${svs}_${STAGE}_mri_slide.nii.gz
+      local hst_slide=$TMPDIR/${svs}_${STAGE}_histo_slide.nii.gz
+      local mri_slide=$TMPDIR/${svs}_${STAGE}_mri_slide.nii.gz
+
+      local mri_slide_png=$TMPDIR/${svs}_${STAGE}_mri_img.png
+      local hist_slide_png=$TMPDIR/${svs}_${STAGE}_hist_img.png
+      local mrilike_slide_png=$TMPDIR/${svs}_${STAGE}_mrilike_img.png
+      local curve_svg=$TMPDIR/${svs}_${STAGE}_curves.svg
 
       # Extract the histology slide
       c3d $SPLAT -slice z $sidx -o $hst_slide
@@ -1449,11 +1538,46 @@ function compute_regeval_metrics()
       c3d $hst_slide $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
         -reslice-identity -o $mri_slide
 
+      # Also extract the corresponding slides from the histology and MRI to
+      # help appreciate registration performance
+      c3d $hst_slide $HIRES_MRI_TO_BFVIS_WARPED \
+        -reslice-identity -stretch 0 98% 0 255 -clip 0 255 \
+        -type uchar -o $mri_slide_png
+
+      c3d -mcs $(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE) \
+        -foreach -slice z $sidx -clip 0 255 -endfor \
+        -type uchar -omc $hist_slide_png
+
+      c3d $(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE) \
+        -slice z $sidx  -stretch 0 98% 0 255 -clip 0 255  \
+        -type uchar -o $mrilike_slide_png
+
       # Run the script
       local metric_output=$WDIR/${svs}_${STAGE}_metric.json
-      if ! python $ROOT/scripts/curve_metric.py $mri_slide $hst_slide > $metric_output; then
+      if ! python $ROOT/scripts/curve_metric.py $mri_slide $hst_slide $curve_svg $metric_output; then
         echo "Failed to get metric for $id $block $STAGE $svs"
+        continue
       fi
+
+      # Add grids and annotations to the PNGs
+      for MYPNG in $mri_slide_png $hist_slide_png $mrilike_slide_png; do
+        # Overlay the SVG
+        convert $curve_svg -density 3 -fuzz 20% -transparent white \
+          $MYPNG -compose DstOver -composite $MYPNG
+
+        # Add gridlines
+        $ROOT/scripts/ashs_grid.sh -o 0.25 -s 25 -c white $MYPNG $MYPNG
+        $ROOT/scripts/ashs_grid.sh -o 0.75 -s 125 -c white $MYPNG $MYPNG
+
+        # Add border
+        convert $MYPNG -bordercolor Black -border 1x1 $MYPNG
+      done
+
+      # Montage the images into one
+      montage -tile 2x2 -geometry +5+5 -mode Concatenate \
+        $mri_slide_png $hist_slide_png $mrilike_slide_png \
+        $WDIR/${svs}_${STAGE}_qa.png
+
     done
   done
 

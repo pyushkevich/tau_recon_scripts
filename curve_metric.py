@@ -11,19 +11,22 @@ import scipy.spatial.distance as sdist
 import scipy.stats
 import json
 import sys
+import svgwrite
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 5:
         print("Wrong number of arguments")
         sys.exit(-1)
 
     # Load the data
-    nii_mri = nib.load(sys.argv[1]);
-    nii_hist = nib.load(sys.argv[2]);
+    nii_mri = nib.load(sys.argv[1])
+    nii_hist = nib.load(sys.argv[2])
+    out_svg = sys.argv[3]
+    out_json = sys.argv[4]
     mri= np.array(nii_mri.dataobj).squeeze()
     hist = np.array(nii_hist.dataobj).squeeze()
 
@@ -80,7 +83,17 @@ if __name__ == "__main__":
     }
 
     # Print the json
-    print(json.dumps(mtx))
+    with open(out_json, "w") as outfile:
+        json.dump(mtx, outfile)
+
+    # Generate a SVG of the curves for visualization
+    dwg = svgwrite.Drawing(out_svg, size=(mri.shape[0], mri.shape[1]))
+    for i in range(1, len(Xm)):
+        dwg.add(dwg.line(start=(Xm[i - 1][0], Xm[i - 1][1]), end=(Xm[i][0], Xm[i][1]), stroke='blue'))
+    for i in range(1, len(Xh)):
+        dwg.add(dwg.line(start=(Xh[i - 1][0], Xh[i - 1][1]), end=(Xh[i][0], Xh[i][1]), stroke='red'))
+    dwg.save()
+
     sys.exit(0)
 
 

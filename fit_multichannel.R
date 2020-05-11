@@ -24,10 +24,14 @@ if (is.null(opt$manifest)){
 }
 
 # Read the manifest file and parse it as a dataframe
-M = read.csv(opt$manifest, header=FALSE, sep=" ", col.names = c('features','mask','target','result'))
+M = read.csv(opt$manifest, header=FALSE, sep=" ",
+             col.names = c('features','mask','target','result'),
+             colClasses = c('character','character','character','character'));
 
 # Read the input data and append to the main matrix
 for (row in 1:nrow(M)) {
+
+   print(paste('Sampling:', M$features[row]))
    
    # Read the three images
    f.nii = readNIfTI(M$features[row]);
@@ -46,8 +50,8 @@ for (row in 1:nrow(M)) {
    # Training sample - inside the mask
    f.fg=f.mat[r.fg,];
    f.bg=f.mat[r.bg,];
-   t.fg=matrix(t.mat[r.fg,]);
-   t.bg=matrix(t.mat[r.bg,]);
+   t.fg=matrix(t.mat[r.fg,],,1);
+   t.bg=matrix(t.mat[r.bg,],,1);
    
    # Get foreground/background samples
    sam.fg = sample.int(sum(r.fg), opt$sfg);
@@ -55,7 +59,7 @@ for (row in 1:nrow(M)) {
    
    # Take the samples
    f.sam = rbind(f.fg[sam.fg,], f.bg[sam.bg,]);
-   t.sam = c(t.fg[sam.fg,], t.bg[sam.bg,]);
+   t.sam = rbind(matrix(t.fg[sam.fg,],,1), matrix(t.bg[sam.bg,],,1));
    
    # Append the samples to the large sample array
    if (row == 1) {
@@ -87,7 +91,9 @@ print(model)
 
 # Second pass: prediction
 for (row in 1:nrow(M)) {
-   
+
+   print(paste('Predicting:', M$features[row]))
+
    # Read the three images
    f.nii = readNIfTI(M$features[row]);
    m.nii = readNIfTI(M$mask[row]);
@@ -110,5 +116,5 @@ for (row in 1:nrow(M)) {
    # Save result
    r.nii = t.nii;
    r.nii[]=matrix(t.sim,c(dim(t.nii),1))
-   writeNIfTI(r.nii,M$result[row]);
+   writeNIfTI(r.nii,gsub("\\..*","",M$result[row]));
 }
