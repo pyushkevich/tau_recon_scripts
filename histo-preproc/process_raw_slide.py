@@ -6,6 +6,7 @@ import os, time, math, sys
 import getopt
 import parse
 import SimpleITK as sitk
+import json
 
 # Little function to round numbers up to closest divisor of d
 def round_up(x, d):
@@ -81,10 +82,10 @@ def process_svs(p):
         # Save dimensions info to a JSON file
         with open(p['summary'] + "_metadata.json", "wt") as fp:
             json.dump({
-                "dimensions": os.dimensions,
-                "level_count": os.level_count,
-                "level_dimensions": os.level_dimensions,
-                "level_downsamples": os.level_downsamples,
+                "dimensions": slide.dimensions,
+                "level_count": slide.level_count,
+                "level_dimensions": slide.level_dimensions,
+                "level_downsamples": slide.level_downsamples,
                 "spacing": (sx,sy) }, fp);
 
         # Get the label
