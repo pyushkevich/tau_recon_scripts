@@ -1,4 +1,23 @@
 #!/bin/bash
+# ====================================
+# Main reconstruction script
+# ====================================
+<<'DOCSTRING'
+
+This script contains the following top-level commands:
+
+rsync_histo_all [REGEXP]                    Pull features/densities (PY2)
+
+
+recon_blockface_all [REGEXP]
+process_mri_all [REGEXP]
+register_blockface_all [REGEXP]
+recon_histo_all [REGEXP] [skip_reg]
+
+
+DOCSTRING
+
+
 set -x -e
 ROOT=/data/picsl/pauly/tau_atlas
 mkdir -p $ROOT/dump
@@ -158,6 +177,10 @@ function set_block_vars()
   # Global blockface training file
   BF_GLOBAL_RFTRAIN=$ROOT/manual/common/blockface_rf.dat
 
+  # Global deepcluster files
+  GLOBAL_NISSL_DEEPCLUSTER_RF_1=$ROOT/manual/common/deepcluster_1.rf
+  GLOBAL_NISSL_DEEPCLUSTER_RF_2=$ROOT/manual/common/deepcluster_2.rf
+
   # MRI-like image extracted from blockface
   BF_MRILIKE=$BF_REG_DIR/${id}_${block}_blockface_mrilike.nii.gz
   BF_ICEMASK=$BF_REG_DIR/${id}_${block}_blockface_icemask.nii.gz
@@ -240,6 +263,7 @@ function set_block_vars()
   HISTO_RECON_MANIFEST=$HISTO_REG_DIR/recon_manifest.txt
 
   # Manifest of Deepcluster based MRI-like images
+  HISTO_DEEPCLUSTER_MRILIKE_ROUGH_MANIFEST=$HISTO_REG_DIR/dc2mri_rough_manifest.txt
   HISTO_DEEPCLUSTER_MRILIKE_MANIFEST=$HISTO_REG_DIR/dc2mri_manifest.txt
 
   # Location where stack_greedy is run
@@ -392,6 +416,8 @@ function set_histo_common_slice_vars()
   SLIDE_RGB=$SLIDE_WORK_DIR/${svs}_rgb.nii.gz
 
   # MRI-like derived from deepcluster (features to mri fitting)
+  SLIDE_DEEPCLUSTER_MRILIKE_ROUGH=$SLIDE_WORK_DIR/${svs}_dc_mrilike_rough.nii.gz
+  SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK=$SLIDE_WORK_DIR/${svs}_dc_mrilike_rough_mask.nii.gz
   SLIDE_DEEPCLUSTER_MRILIKE=$SLIDE_WORK_DIR/${svs}_dc_mrilike.nii.gz
 
   # Mask generated from the RGB file
@@ -1125,6 +1151,123 @@ function preproc_histology()
   done < $HISTO_MATCH_MANIFEST
 }
 
+# Rough mapping of deepcluster features to MRI intensities based on the
+# a random forest trained on a few slices
+function rough_map_deepcluster_to_mri()
+{
+  local id block args
+  read -r id block args <<< "$@"
+  set_block_vars $id $block
+
+  # Remap intensity from deepcluster to MRI based on the affine registration
+  # TODO: this functionality needs to be integrated into stack_greedy if it
+  # is found to work. For now though we keep it in this loop.
+  local REMAP_MANIFEST=$TMPDIR/remap_manifest.txt
+  rm -f $REMAP_MANIFEST
+
+  while read -r svs args; do
+
+    # Set the variables
+    set_histo_common_slice_vars $id $block $svs
+
+    # A copy of the feature map with the NII matrix matching tearfix
+    local SLIDE_DEEPCLUSTER_MFIX=$TMPDIR/${svs}_deepcluster_mfix.nii.gz
+
+    # Get the dimensions of the deep cluster image
+    local DDIM=$(c2d $SLIDE_DEEPCLUSTER -info-full | grep Dimensions | sed -e "s/.*://")
+    local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq .[]))
+
+    # Fix header to match the RGB image
+    c2d $SLIDE_RGB -resample $DDIM2 -popas X \
+      -mcs $SLIDE_DEEPCLUSTER -foreach -insert X 1 -copy-transform -endfor \
+      -omc $SLIDE_DEEPCLUSTER_MFIX
+
+    # Random forest bug means we have to split the image into batches of 10
+    c3d -mcs $SLIDE_DEEPCLUSTER_MFIX -tile z -slice z 0:9 -omc $TMPDIR/dc1.nii.gz
+    c3d -mcs $SLIDE_DEEPCLUSTER_MFIX -tile z -slice z 10:19 -omc $TMPDIR/dc2.nii.gz
+
+    c2d -mcs $TMPDIR/dc1.nii.gz -rf-apply $GLOBAL_NISSL_DEEPCLUSTER_RF_1 \
+      -omc $TMPDIR/prob1.nii.gz
+
+    c2d -mcs $TMPDIR/dc2.nii.gz -rf-apply $GLOBAL_NISSL_DEEPCLUSTER_RF_2 \
+      -omc $TMPDIR/prob2.nii.gz
+
+    c2d -mcs $TMPDIR/prob1.nii.gz $TMPDIR/prob2.nii.gz \
+      -foreach -dup -times -endfor \
+      -foreach-comp 3 -add -sqrt -endfor \
+      -wsum 200 100 0 -o $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH
+
+    c2d -mcs $TMPDIR/prob1.nii.gz $TMPDIR/prob2.nii.gz \
+      -foreach -dup -times -endfor \
+      -foreach-comp 3 -add -sqrt -endfor \
+      -vote -thresh 2 2 0 1 \
+      -dup -dup -scale 0 -shift 1 -pad 3x3 3x3 0 -dilate 0 4x4 \
+      -int 0 -reslice-identity -times \
+      -o $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK
+
+  done < $HISTO_RECON_MANIFEST
+}
+
+
+function fit_deepcluster_to_mri()
+{
+  local id block iter
+  read -r id block iter <<< "$@"
+  set_block_vars $id $block
+
+  # Remap intensity from deepcluster to MRI based on the affine registration
+  # TODO: this functionality needs to be integrated into stack_greedy if it
+  # is found to work. For now though we keep it in this loop.
+  local REMAP_MANIFEST=$TMPDIR/remap_manifest.txt
+  rm -f $REMAP_MANIFEST
+
+  while read -r svs args; do
+
+    # Set the variables
+    set_histo_common_slice_vars $id $block $svs
+
+    # A copy of the feature map with the NII matrix matching tearfix
+    local SLIDE_DEEPCLUSTER_MFIX=$TMPDIR/${svs}_deepcluster_mfix.nii.gz
+    local SLIDE_MRI_TO_DEEPCLUSTER=$TMPDIR/${svs}_mri_to_deepcluster.nii.gz
+    local SLIDE_MASK_TO_DEEPCLUSTER=$TMPDIR/${svs}_mask_to_deepcluster.nii.gz
+
+    # Get the dimensions of the deep cluster image
+    local DDIM=$(c2d $SLIDE_DEEPCLUSTER -info-full | grep Dimensions | sed -e "s/.*://")
+    local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq .[]))
+
+    # Fix header
+    c2d $SLIDE_RGB -resample $DDIM2 -popas X \
+      -mcs $SLIDE_DEEPCLUSTER -foreach -insert X 1 -copy-transform -endfor \
+      -omc $SLIDE_DEEPCLUSTER_MFIX
+
+    # Fix mask
+    c2d $SLIDE_MASK -smooth-fast 0.04mm \
+      -resample $DDIM2 -thresh 0.5 inf 1 0 -o $SLIDE_MASK_TO_DEEPCLUSTER
+
+    # Align MRI to this resolution
+    greedy -d 2 -rf $SLIDE_MASK_TO_DEEPCLUSTER \
+      -rm $HISTO_RECON_DIR/vol/slides/alt/mri/vol_slide_mri_${svs}.nii.gz \
+          $SLIDE_MRI_TO_DEEPCLUSTER \
+      -r $HISTO_RECON_DIR/vol/$iter/affine_refvol_mov_${svs}_$iter.mat,-1
+
+    # Add line to manifest file
+    echo $SLIDE_DEEPCLUSTER_MFIX \
+         $SLIDE_MASK_TO_DEEPCLUSTER \
+         $SLIDE_MRI_TO_DEEPCLUSTER \
+         $SLIDE_DEEPCLUSTER_MRILIKE \
+         >> $REMAP_MANIFEST
+
+    # Add line to the manifest for stack_greedy
+    echo $svs $SLIDE_DEEPCLUSTER_MRILIKE >> $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
+
+  done < $HISTO_RECON_MANIFEST
+
+  # And now do the remapping
+  Rscript $ROOT/scripts/fit_multichannel.R \
+    --manifest $REMAP_MANIFEST \
+    --sfg 500 --sbg 100
+}
+
 
 function recon_histology()
 {
@@ -1150,10 +1293,11 @@ function recon_histology()
   rm -f $HISTO_RECON_MANIFEST
 
   # Additional manifest: for generating RGB NISSL images
-  rm -f $HISTO_NISSL_RGB_SPLAT_MANIFEST $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
+  rm -f $HISTO_NISSL_RGB_SPLAT_MANIFEST
   rm -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
   rm -f $HISTO_HISTO_ANNOT_SPLAT_MANIFEST
-  rm -f $HISTO_NISSL_DEEPCLUSTER_TO_MRI_MANIFEST
+  rm -f $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
+  rm -f $HISTO_DEEPCLUSTER_MRILIKE_ROUGH_MANIFEST
 
   # Another file to keep track of the range of NISSL files
   local NISSL_ZRANGE=$TMPDIR/nissl_zrange.txt
@@ -1200,12 +1344,17 @@ function recon_histology()
       continue
     fi
 
-    # Get the path to the MRI-like histology slide
-    echo $svs $ZPOS 1 $SLIDE_TEARFIX $SLIDE_MASK >> $HISTO_RECON_MANIFEST
+    # The main manifest lists the RGB NISSL slide
+    echo $svs $ZPOS 1 \
+      $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH \
+      $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK >> $HISTO_RECON_MANIFEST
 
-    # Add to the nissl manifest
+    # Deep cluster MRI-like slide manifest
+    echo $svs $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH >> $HISTO_DEEPCLUSTER_MRILIKE_ROUGH_MANIFEST
+    echo $svs $SLIDE_DEEPCLUSTER_MRILIKE >> $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
     echo $svs $SLIDE_RGB >> $HISTO_NISSL_RGB_SPLAT_MANIFEST
-    echo $svs $SLIDE_TEARFIX >> $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST
+
+    # Keep track of the z-range
     echo $svs $ZPOS >> $NISSL_ZRANGE
 
     # Check if there is a registration validation tracing for this slide
@@ -1236,106 +1385,39 @@ function recon_histology()
     echo "Skipping registration"
   else
 
-    # TODO: this is for now only!
-    if [[ ! -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST ]]; then
-      return
-    fi
+    # Match histology to MRI
+    rough_map_deepcluster_to_mri $id $block iter00
 
-<<'SKIP'
     # Run processing with stack_greedy
     stack_greedy init -M $HISTO_RECON_MANIFEST -gm $HISTO_RECON_DIR
 
     # Jan 2020: the zeps=4 value seems to work better for the NCC metric, the
     # previously used value of 0.5 ended up having lots of slices skipped. But
     # need to doublecheck that this does not hurt other registrations
-    stack_greedy recon -z 1.6 4.0 \
-      -m NCC 8x8 -n 100x40x0x0 -search 4000 flip 5 $HISTO_RECON_DIR
+    stack_greedy -N recon -z 1.6 4 0.1 \
+      -m NCC 8x8 -n 100x40x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
-    stack_greedy volmatch -i $BFVIS_MRILIKE \
-      -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
+    stack_greedy -N volmatch -i $BFVIS_MRILIKE \
+      -m NMI -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
 
-    stack_greedy voliter -R 1 10 -na 10 -nd 10 -w 0.5 -wdp \
-      -m NCC 8x8 -n 100x40x10 $HISTO_RECON_DIR
+    # Add the MRI volume, which will serve as target for subsequent registrations
+    stack_greedy -N voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
 
-    stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
-      -m NCC 8x8 -n 100x40x10 -s 2.0mm 0.2mm -sv-incompr -mm $HISTO_RECON_DIR
+    # Run affine registration to MRI
+    stack_greedy -N voliter -R 1 10 -na 10 -nd 10 -w 0.5 -wdp \
+      -m NCC 8x8 -n 100x40x10 -i mri \
+      $HISTO_RECON_DIR
 
-    # Now run stack_greedy against the MRI volume. We use the results of the
-    # last affine stage to prime
-    stack_greedy voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
-
-    # Remap intensity from deepcluster to MRI based on the affine registration
-    # TODO: this functionality needs to be integrated into stack_greedy if it
-    # is found to work. For now though we keep it in this loop.
-    local REMAP_MANIFEST=$TMPDIR/remap_manifest.txt
-
-    rm -f $REMAP_MANIFEST
-    rm -f $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
-
-    while read -r svs args; do
-
-      # Set the variables
-      set_histo_common_slice_vars $id $block $svs
-
-      # A copy of the feature map with the NII matrix matching tearfix
-      local SLIDE_DEEPCLUSTER_MFIX=$TMPDIR/${svs}_deepcluster_mfix.nii.gz
-      local SLIDE_MRI_TO_DEEPCLUSTER=$TMPDIR/${svs}_mri_to_deepcluster.nii.gz
-      local SLIDE_MASK_TO_DEEPCLUSTER=$TMPDIR/${svs}_mask_to_deepcluster.nii.gz
-
-      # Get the dimensions of the deep cluster image
-      local DDIM=$(c2d $SLIDE_DEEPCLUSTER -info-full | grep Dimensions | sed -e "s/.*://")
-      local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq .[]))
-
-      # Fix header
-      c2d $SLIDE_TEARFIX -resample $DDIM2 -popas X \
-        -mcs $SLIDE_DEEPCLUSTER -foreach -insert X 1 -copy-transform -endfor \
-        -omc $SLIDE_DEEPCLUSTER_MFIX
-
-      # Fix mask
-      c2d $SLIDE_MASK -smooth-fast 0.04mm \
-        -resample $DDIM2 -thresh 0.5 inf 1 0 -o $SLIDE_MASK_TO_DEEPCLUSTER
-
-      # Align MRI to this resolution
-      greedy -d 2 -rf $SLIDE_MASK_TO_DEEPCLUSTER \
-        -rm $HISTO_RECON_DIR/vol/slides/alt/mri/vol_slide_mri_${svs}.nii.gz \
-            $SLIDE_MRI_TO_DEEPCLUSTER \
-        -r $HISTO_RECON_DIR/vol/iter10/affine_refvol_mov_${svs}_iter10.mat,-1
-
-      # Add line to manifest file
-      echo $SLIDE_DEEPCLUSTER_MFIX \
-           $SLIDE_MASK_TO_DEEPCLUSTER \
-           $SLIDE_MRI_TO_DEEPCLUSTER \
-           $SLIDE_DEEPCLUSTER_MRILIKE \
-           >> $REMAP_MANIFEST
-
-      # Add line to the manifest for stack_greedy
-      echo $svs $SLIDE_DEEPCLUSTER_MRILIKE >> $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
-
-    done < $HISTO_RECON_MANIFEST
-
-    # And now do the remapping
-    Rscript $ROOT/scripts/fit_multichannel.R \
-      --manifest $REMAP_MANIFEST \
-      --sfg 500 --sbg 100
-
-SKIP
+    # Rematch histology to MRI based on affine result
+    fit_deepcluster_to_mri $id $block iter10
 
     # We are using the result of iteration 20 to start the MRI registration
-    stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 1.0 -wdp \
+    stack_greedy -N voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
       -m NCC 8x8 -n 80x80 -s 3.0mm 0.25mm -mm \
       -M $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST -i mri \
       $HISTO_RECON_DIR
 
-    # RUN 2
-    # Try a more aggressive registration (?)
-    # stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 0.5 -wdp \
-    #   -m NCC 8x8 -n 80x80 -s 2.0mm 0.2mm -sv-incompr -mm \
-    #   -i mri $HISTO_RECON_DIR
-    # stack_greedy voliter -R 21 30 -k 20 -na 10 -nd 20 -w 0.5 -wdp \
-    #  -m NCC 16x16 -n 80x80 -s 2.0mm 0.5mm -mm \
-    #  -i mri $HISTO_RECON_DIR
   fi
-
 
   # Splat the NISSL slides if they are available
   local nissl_z0=$(cat $NISSL_ZRANGE | awk '{print $2}' | sort -n | head -n 1)
@@ -1355,8 +1437,7 @@ SKIP
 
 
   # Perform splatting at different stages
-  ### local SPLAT_STAGES="recon volmatch voliter-10 voliter-20 voliter-30"
-  local SPLAT_STAGES="voliter-30"
+  local SPLAT_STAGES="recon volmatch voliter-10 voliter-20"
   for STAGE in $SPLAT_STAGES; do
 
     local OUT="$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE)"
@@ -1386,7 +1467,7 @@ SKIP
   done
 
   # The remaining splats should only use the last stage
-  STAGE=voliter-30
+  STAGE=voliter-20
   if [[ -f $HISTO_ANNOT_SPLAT_MANIFEST ]]; then
     local OUT="$(printf $HISTO_ANNOT_SPLAT_PATTERN $STAGE)"
 
@@ -1433,16 +1514,12 @@ SKIP
 
   # Create an ITK-SNAP workspace
   itksnap-wt \
-    -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-30)" \
+    -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)" \
     -psn "NISSL warp to MRI" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
-    -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)" \
-    -psn "NISSL warp to BF" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
     -laa "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-10)" \
     -psn "NISSL affine to BF" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
-    -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-30)" \
-    -psn "MRIlike warp to MRI" -props-set-contrast LINEAR 0 0.2 \
     -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-20)" \
-    -psn "MRIlike warp to BF" -props-set-contrast LINEAR 0 0.2 \
+    -psn "MRIlike warp to MRI" -props-set-contrast LINEAR 0 0.2 \
     -laa "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-10)" \
     -psn "MRIlike affine to BF" -props-set-contrast LINEAR 0 0.2 \
     -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
@@ -1494,7 +1571,7 @@ function compute_regeval_metrics()
   mesh_image_sample $MRI_CONTOUR_V2 $MRI_CONTOUR_LABEL $HISTO_REGEVAL_MRI_MESH Label
 
   # Go over splat stages
-  local SPLAT_STAGES="volmatch voliter-10 voliter-20 voliter-30"
+  local SPLAT_STAGES="volmatch voliter-10 voliter-20"
   for STAGE in $SPLAT_STAGES; do
 
     # Create directory for evaluation
