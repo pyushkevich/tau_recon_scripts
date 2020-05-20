@@ -7,7 +7,7 @@
 This script contains the following top-level commands:
 
 rsync_histo_all [REGEXP]                    Pull features/densities (PY2)
-
+preproc_histology_all [REGEXP]              Generate RGB images, masks
 
 recon_blockface_all [REGEXP]
 process_mri_all [REGEXP]
@@ -399,8 +399,7 @@ function set_histo_common_slice_vars()
   # Local density directory for the slide
   SLIDE_LOCAL_DENSITY_DIR=$SPECIMEN_HISTO_LOCAL_ROOT/$svs/density
 
-  # The location of the tear-fixed slide
-  SLIDE_TEARFIX=$SLIDE_LOCAL_PREPROC_DIR/${svs}_tearfix.nii.gz
+  # The location of the deepcluster 20-feature image
   SLIDE_DEEPCLUSTER=$SLIDE_LOCAL_PREPROC_DIR/${svs}_deepcluster.nii.gz
 
   # The location of the RGB thumbnail
@@ -412,8 +411,8 @@ function set_histo_common_slice_vars()
   # Work directory for slide-derived stuff
   SLIDE_WORK_DIR=$ROOT/work/$id/histo_proc/$svs
 
-  # Nifti file generated from thumbnail that matches the tearfix file
-  SLIDE_RGB=$SLIDE_WORK_DIR/${svs}_rgb.nii.gz
+  # Nifti RGB image with 40 micron resolution
+  SLIDE_RGB=SLIDE_LOCAL_PREPROC_DIR/${svs}_rgb_40um.nii.gz
 
   # MRI-like derived from deepcluster (features to mri fitting)
   SLIDE_DEEPCLUSTER_MRILIKE_ROUGH=$SLIDE_WORK_DIR/${svs}_dc_mrilike_rough.nii.gz
@@ -1041,7 +1040,7 @@ function rsync_histo_proc()
   set_specimen_vars $id
 
   # Create some exclusions
-  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*affine\.mat|.*densitymap\.tiff"
+  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff"
   mkdir -p $SPECIMEN_HISTO_LOCAL_ROOT
   gsutil -m rsync -R -x "$EXCL" $SPECIMEN_HISTO_GCP_ROOT/ $SPECIMEN_HISTO_LOCAL_ROOT/
 }
@@ -1321,8 +1320,8 @@ function recon_histology()
     mkdir -p $SLIDE_WORK_DIR
 
     # Make sure the preprocessing data for this slice exists, if not issue a warning
-    if [[ ! -f $SLIDE_TEARFIX || ! -f $SLIDE_DEEPCLUSTER ]]; then
-      echo "WARNING: missing TEARFIX or DEEPCLUSTER file for $svs"
+    if [[ ! -f $SLIDE_DEEPCLUSTER ]]; then
+      echo "WARNING: missing DEEPCLUSTER file for $svs"
       continue
     fi
 
