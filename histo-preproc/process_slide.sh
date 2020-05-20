@@ -5,7 +5,7 @@ id=${1?}
 svs=${2?}
 
 # Configure gsutil
-#gcloud auth activate-service-account --key-file /var/secrets/google/key.json
+gcloud auth activate-service-account --key-file /var/secrets/google/key.json
 gcloud config set project cfn-cluster-test
 
 # Upload function
