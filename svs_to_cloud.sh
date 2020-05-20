@@ -6,7 +6,12 @@
 # ----------------------------------------------------
 
 # Globals
-ROOT=/data/picsl/pauly/tau_atlas
+if [[ $RECON_ROOT ]]; then
+  ROOT=$RECON_ROOT
+else
+  ROOT=/data/picsl/pauly/tau_atlas
+fi
+
 MDIR=$ROOT/manifest
 
 # Run kubectl with additional options
