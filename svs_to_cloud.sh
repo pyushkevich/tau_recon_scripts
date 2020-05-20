@@ -173,7 +173,7 @@ function preprocess_specimen_slides()
 
     # Check if we have to do this
     local must_run=$force
-    for fn in thumbnail.tiff x16.png resolution.txt mrilike.nii.gz tearfix.nii.gz; do
+    for fn in thumbnail.tiff x16.png resolution.txt metadata.json rgb_40um.nii.gz; do
       fn_full=${BASE}${fn}
       if ! grep "$fn_full" $FREMOTE > /dev/null; then
         must_run=1
