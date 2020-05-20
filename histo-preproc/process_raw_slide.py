@@ -66,7 +66,7 @@ def process_svs(p):
         wy = round_up(slide.dimensions[1] * sy / 0.04, 1)
 
         # Get the thumbnail from the image at this resolution
-        idata = np.asarray(slide.get_thumbnail(wx, wy))
+        idata = np.asarray(slide.get_thumbnail((wx, wy)))
         (wwx, wwy) = (idata.shape[0], idata.shape[1])
 
         # Recompute the spacing using the actual size of image
@@ -79,7 +79,7 @@ def process_svs(p):
         sitk.WriteImage(res, p['summary'] + '_rgb_40um.nii.gz')
 
         # Save dimensions info to a JSON file
-        with open(p['summary' + "_metadata.json"]) as fp:
+        with open(p['summary'] + "_metadata.json", "wt") as fp:
             json.dump({
                 "dimensions": os.dimensions,
                 "level_count": os.level_count,
