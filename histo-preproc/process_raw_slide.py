@@ -29,7 +29,7 @@ def get_spacing(slide):
             r = parse.parse('Resolution = {} um', z)
             if r is not None:
                 sx = float(r[0]) / 1000.0
-                sy = float(r[1]) / 1000.0
+                sy = float(r[0]) / 1000.0
     # If there is no spacing, throw exception
     if sx == 0.0 or sy == 0.0:
         raise Exception('No spacing information in image')
