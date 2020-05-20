@@ -5,7 +5,7 @@ id=${1?}
 svs=${2?}
 
 # Configure gsutil
-gcloud auth activate-service-account --key-file /var/secrets/google/key.json
+#gcloud auth activate-service-account --key-file /var/secrets/google/key.json
 gcloud config set project cfn-cluster-test
 
 # Upload function
@@ -66,8 +66,10 @@ if [[ $LEVELS -le 1 ]]; then
   fi
 fi
 
-# Extract a thumbnail
+# Extract a thumbnail and a 40um resolution image
 SUMMARY=./data/${svs}_thumbnail.tiff
+RGB_NIFTI=./data/${svs}_rgb_40um.nii.gz
+METADATA=./data/${svs}_metadata.json
 LABELFILE=./data/${svs}_label.tiff
 python process_raw_slide.py -i $svslocal -s ./data/${svs}
 
@@ -89,23 +91,9 @@ vips tiffsave $MIDRES_TIFF $MIDRES_PTIFF \
 
 # Upload the results generated so far
 upload_result $SUMMARY 1
+upload_result $RGB_NIFTI 1
+upload_result $METADATA 1
 upload_result $MIDRES_PNG 1
 upload_result $MIDRES_PTIFF 1
 upload_result $RESFILE 1
 upload_result $LABELFILE 0
-
-# Get the MRI-like appearance
-MRILIKE=./data/${svs}_mrilike.nii.gz
-TEARFIX=./data/${svs}_tearfix.nii.gz
-python process_raw_slide.py -i $svslocal -o ./data/${svs}_mrilike.nii.gz -t 100
-
-# Additional c3d processing
-c2d $MRILIKE -clip 0 1 -stretch 0 1 1 0 \
-  -as G -thresh 0.2 inf 1 0 -as M \
-  -push G -median 11x11 -times \
-  -push G -push M -replace 0 1 1 0 -times \
-  -add -o $TEARFIX
-
-# Check that each of the outputs exists
-upload_result $MRILIKE 1
-upload_result $TEARFIX 1

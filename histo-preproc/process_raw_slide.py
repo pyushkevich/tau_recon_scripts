@@ -17,6 +17,25 @@ def tile_means(img, tile_size):
     c=np.mean(b.reshape(-1,tile_size,b.shape[1]),axis=1)
     return c
 
+# Read spacing from an OpenSlide
+# Get the image spacing from the header, in mm units
+def get_spacing(slide):
+    (sx, sy) = (0.0, 0.0)
+    if 'openslide.mpp-x' in slide.properties:
+        sx = float(slide.properties['openslide.mpp-x']) / 1000.0
+        sy = float(slide.properties['openslide.mpp-y']) / 1000.0
+    elif 'openslide.comment' in slide.properties:
+        for z in slide.properties['openslide.comment'].split('\n'):
+            r = parse.parse('Resolution = {} um', z)
+            if r is not None:
+                sx = float(r[0]) / 1000.0
+                sy = float(r[1]) / 1000.0
+    # If there is no spacing, throw exception
+    if sx == 0.0 or sy == 0.0:
+        raise Exception('No spacing information in image')
+    return (sx, sy)
+
+
 # Main function
 def process_svs(p):
 
@@ -34,88 +53,44 @@ def process_svs(p):
 
     # If we just want summaries, do that
     if len(p['summary']):
+        # The simple thumbnail
         img = slide.get_thumbnail((1000,1000))
         img.save(p['summary'] + '_thumbnail.tiff')
+
+        # The NIFTI thumbnail with fixed resolution
+        (sx,sy) = get_spacing(slide)
+
+        # Determine the dimensions of the thumbnail to achieve desired
+        # resolution of 0.04x0.04mm
+        wx = round_up(slide.dimensions[0] * sx / 0.04, 1)
+        wy = round_up(slide.dimensions[1] * sy / 0.04, 1)
+
+        # Get the thumbnail from the image at this resolution
+        idata = np.asarray(slide.get_thumbnail(wx, wy))
+        (wwx, wwy) = (idata.shape[0], idata.shape[1])
+
+        # Recompute the spacing using the actual size of image
+        ssx = (sx * slide.dimensions[0]) / wwx
+        ssy = (sy * slide.dimensions[1]) / wwy
+
+        # Save as a NIFTI
+        res = sitk.GetImageFromArray(idata, True)
+        res.SetSpacing((sx, sy))
+        sitk.WriteImage(res, p['summary'] + '_rgb_40um.nii.gz')
+
+        # Save dimensions info to a JSON file
+        with open(p['summary' + "_metadata.json"]) as fp:
+            json.dump({
+                "dimensions": os.dimensions,
+                "level_count": os.level_count,
+                "level_dimensions": os.level_dimensions,
+                "level_downsamples": os.level_downsamples,
+                "spacing": (sx,sy) }, fp);
 
         # Get the label
         if 'label' in slide.associated_images:
             img = slide.associated_images['label']
             img.save(p['summary'] + '_label.tiff')
-
-    if len(p['out_img']):
-
-        # Round up the dimensions to fit an even number of blocks
-        tile_size = p['tile_size']
-        wx = round_up(slide.dimensions[0], tile_size)
-        wy = round_up(slide.dimensions[1], tile_size)
-
-        # Get the image spacing from the header, in mm units
-        (sx, sy) = (0.0, 0.0)
-        if 'openslide.mpp-x' in slide.properties:
-            sx = float(slide.properties['openslide.mpp-x']) * tile_size / 1000.0
-            sy = float(slide.properties['openslide.mpp-y']) * tile_size / 1000.0
-        elif 'openslide.comment' in slide.properties:
-            for z in slide.properties['openslide.comment'].split('\n'):
-                r = parse.parse('Resolution = {} um', z)
-                if r is not None:
-                    sx = float(r[0]) * tile_size / 1000.0
-                    sy = float(r[0]) * tile_size / 1000.0
-
-        # If there is no spacing, throw exception
-        if sx == 0.0 or sy == 0.0:
-          raise Exception('No spacing information in image')
-
-        # Report spacing information
-        print("Spacing of the mri-like image: %gx%gmm\n" % (sx, sy))
-
-        # Allocate output image
-        (ox,oy)=(wx/tile_size, wy/tile_size)
-        oimg=np.zeros([oy,ox])
-
-        # Set the chunk size in pixels and the chunk arrays
-        chunk_tiles=40
-        chunk_size=tile_size * chunk_tiles
-        px = np.arange(0,round_up(slide.dimensions[0],chunk_size), chunk_size)
-        py = np.arange(0,round_up(slide.dimensions[1],chunk_size), chunk_size)
-
-        # Stain matrix stuff
-        stain_mat = np.array([
-            [ 0.6443186, 0.7166757, 0.26688856],
-            [0.09283128, 0.9545457, 0.28324] ,
-            [0.63595444, 0.001, 0.7717266]])
-        stain_mat_inv = np.linalg.inv(stain_mat)
-
-        # Loop over the chunks
-        for ix in px:
-            for iy in py:
-
-                # Read the region and convert to NUMPY
-                reg=np.array(slide.read_region((ix,iy), 0, (chunk_size,chunk_size)))[:,:,0:3]
-                
-                # Color deconvolution
-                reg_hemo=1 - np.dot(-np.log((reg+1.) / 256.0), stain_mat_inv[1,])
-                
-                # ITK math morphology
-                reg_mm=sitk.GetArrayFromImage(
-                    sitk.GrayscaleDilate(
-                        sitk.GetImageFromArray(reg_hemo, False), 6));
-                
-                # Reduce to a small image
-                a=tile_means(reg_mm,tile_size)
-                
-                # Fill the corresponding region of the output image
-                (qx,qy) = (ix/tile_size,iy/tile_size)
-                (zx,zy) = (min(ox-qx,chunk_tiles), min(oy-qy,chunk_tiles))    
-                oimg[qy:qy+zy,qx:qx+zx]=a[0:zy,0:zx]
-
-                # Print progress
-                print('Chunk (%03d,%03d)' % (ix,iy))
-
-
-        # Write the result as a NIFTI file
-        res = sitk.GetImageFromArray(oimg, False)
-        res.SetSpacing((sx, sy))
-        sitk.WriteImage(res, p['out_img'])
 
     if len(p['out_x16']):
 
