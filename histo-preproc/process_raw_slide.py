@@ -76,7 +76,7 @@ def process_svs(p):
 
         # Save as a NIFTI
         res = sitk.GetImageFromArray(idata, True)
-        res.SetSpacing((sx, sy))
+        res.SetSpacing((ssx, ssy))
         sitk.WriteImage(res, p['summary'] + '_rgb_40um.nii.gz')
 
         # Save dimensions info to a JSON file
