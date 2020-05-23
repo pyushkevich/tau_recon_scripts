@@ -6,15 +6,20 @@
 
 This script contains the following top-level commands:
 
-rsync_histo_all [REGEXP]                    Pull features/densities (PY2)
-preproc_histology_all [REGEXP]              Generate RGB images, masks
+rsync_histo_all [RE]                    Pull features/densities (PY2)
+rsync_histo_annot_all [RE]              Pull annotations
+preproc_histology_all [RE]              Generate RGB masks (needed?)
 
-recon_blockface_all [REGEXP]
-process_mri_all [REGEXP]
-register_blockface_all [REGEXP]
-recon_histo_all [REGEXP] [skip_reg]
+recon_blockface_all [RE]                Blockface to 3D volume
+process_mri_all [RE]                    MRI 7T to 9.4T
+register_blockface_all [RE]             MRI to blockface
+recon_histo_all [RE] [skip_reg]         Histology recon and splatting
 
+compute_regeval_metrics_all [RE]        Compute registration metrics
 
+match_ihc_to_nissl_all <stain> [RE]     Match tau, etc to NISSL
+splat_density_all <stain> <model> [RE]  Generate block density maps
+merge_splat_all <stain> <model> [RE]    Splat to specimen MRI space
 DOCSTRING
 
 
@@ -116,6 +121,10 @@ function set_specimen_vars()
   # Manual segmentation of the PHG from Sadhana
   HIRES_MRI_MANUAL_PHGSEG=$ROOT/manual/$id/mri_seg/${id}_axisalign_phgsegshape_multilabel.nii.gz
   HIRES_MRI_MANUAL_PHGSEG_AFFINE=$ROOT/manual/$id/mri_seg/${id}_raw_to_axisalign.mat
+
+  # Location for the final QC files for this specimen. Final QC should all
+  # go into a flat folder to make it easier to check with eog, etc.
+  SPECIMEN_QCDIR=$ROOT/work/$id/qc
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -402,17 +411,16 @@ function set_histo_common_slice_vars()
   # The location of the deepcluster 20-feature image
   SLIDE_DEEPCLUSTER=$SLIDE_LOCAL_PREPROC_DIR/${svs}_deepcluster.nii.gz
 
-  # The location of the RGB thumbnail
+  # The location of the RGB thumbnail, RGB nifti, and metadata JSON
   SLIDE_THUMBNAIL=$SLIDE_LOCAL_PREPROC_DIR/${svs}_thumbnail.tiff
+  SLIDE_RGB=$SLIDE_LOCAL_PREPROC_DIR/${svs}_rgb_40um.nii.gz
+  SLIDE_METADATA=$SLIDE_LOCAL_PREPROC_DIR/${svs}_metadata.json
 
   # The location of the resolution descriptor
   SLIDE_RAW_RESOLUTION_FILE=$SLIDE_LOCAL_PREPROC_DIR/${svs}_resolution.txt
 
   # Work directory for slide-derived stuff
   SLIDE_WORK_DIR=$ROOT/work/$id/histo_proc/$svs
-
-  # Nifti RGB image with 40 micron resolution
-  SLIDE_RGB=SLIDE_LOCAL_PREPROC_DIR/${svs}_rgb_40um.nii.gz
 
   # MRI-like derived from deepcluster (features to mri fitting)
   SLIDE_DEEPCLUSTER_MRILIKE_ROUGH=$SLIDE_WORK_DIR/${svs}_dc_mrilike_rough.nii.gz
@@ -1125,17 +1133,9 @@ function preproc_histology()
     mkdir -p $SLIDE_WORK_DIR
 
     # Make sure the preprocessing data for this slice exists, if not issue a warning
-    if [[ ! -f $SLIDE_TEARFIX || ! -f $SLIDE_THUMBNAIL ]]; then
+    if [[ ! -f $SLIDE_RGB || ! -f $SLIDE_THUMBNAIL ]]; then
       echo "WARNING: missing images for $svs"
       continue
-    fi
-
-    # Generate the RGB file from the thumbnail
-    # TODO: disable check for production mode
-    if [[ ! -f $SLIDE_RGB ]]; then
-      c2d $SLIDE_TEARFIX -popas R -mcs $SLIDE_THUMBNAIL \
-        -foreach -insert R 1 -mbb -insert R 1 -reslice-identity -endfor \
-        -type uchar -omc $SLIDE_RGB
     fi
 
     # Generate a mask from the RGB (only for NISSL slices)
@@ -1384,6 +1384,8 @@ function recon_histology()
     echo "Skipping registration"
   else
 
+<<'TTTTT'
+
     # Match histology to MRI
     rough_map_deepcluster_to_mri $id $block iter00
 
@@ -1410,9 +1412,11 @@ function recon_histology()
     # Rematch histology to MRI based on affine result
     fit_deepcluster_to_mri $id $block iter10
 
+TTTTT
+
     # We are using the result of iteration 20 to start the MRI registration
-    stack_greedy -N voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
-      -m NCC 8x8 -n 80x80 -s 3.0mm 0.25mm -mm \
+    stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 2.0 -wdp \
+      -m NCC 8x8 -n 40x80x80 -s 3.0mm 0.25mm -mm \
       -M $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST -i mri \
       $HISTO_RECON_DIR
 
@@ -2013,7 +2017,6 @@ function match_ihc_to_nissl()
 
     # Set the slide variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice
-    echo $SLIDE_RGB $SLIDE_LONG_NAME
 
     # Create the registration directory for this
     mkdir -p $SLIDE_IHC_TO_NISSL_REGDIR
@@ -2031,19 +2034,6 @@ function match_ihc_to_nissl()
       # Perform the whole-slide registration (rigid and deformable)
       greedy -d 2 -a -dof 6 -i $NISSL_NEG $IHC_NEG -o $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
         -m NCC 16x16 -n 100x40x10x0 -search 4000 any 5 -ia-image-centers -gm $NISSL_SLIDE_MASK
-
-  <<'SKIPDEF'
-      greedy -d 2 -i $NISSL_NEG $IHC_NEG -it $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
-        -o $SLIDE_IHC_TO_NISSL_GLOBAL_WARP -sv -sv-incompr -m NCC 16x16 -n 400x200x160x60 \
-        -s 2mm 0.1mm -gm $NISSL_SLIDE_MASK 
-
-      # Reslice using global transformation
-      local IHC_NEG_RESLICE_GLOBAL=$TMPDIR/${SLIDE_LONG_NAME}_reslice_neg_global.nii.gz
-      greedy -d 2 -rf $NISSL_NEG \
-        -rm $IHC_NEG $IHC_NEG_RESLICE_GLOBAL \
-        -rm $SLIDE_RGB $SLIDE_IHC_TO_NISSL_RESLICE_GLOBAL \
-        -r $SLIDE_IHC_TO_NISSL_GLOBAL_WARP $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
-SKIPDEF
 
       # Chunk up the registration mask
       local NISSL_MASK_CC=$TMPDIR/nissl_mask_cc.nii.gz
@@ -2442,6 +2432,107 @@ function rsync_histo_annot_all()
   # Wait for completion
   qsub $QSUBOPT -b y -sync y -hold_jid "rsync_histo_annot_*" /bin/sleep 0
 }
+
+# Generate some final QC for a block
+function block_final_qc()
+{
+  # What specimen and block are we doing this for?
+  local id block args svs
+  read -r id block args <<< "$@"
+  set_block_vars $id $block
+
+  # Create the directory
+  mkdir -p $SPECIMEN_QCDIR
+
+  # For now only target one stage
+  local STAGE="voliter-20"
+
+  # We just want to capture the registration of the different modalities
+  # at representative slices. Use this json for parameters
+  local JPAR=$TMPDIR/qc_param.json
+  echo '{"s":[["z","20%"],["z","50%"],["z","80%"],["x","50%"]]}' > $JPAR
+
+  # Iterate over slices
+  local NSLICES=$(jq '.s | length' $JPAR)
+  for ((i=0; i<NSLICES; i++)); do
+
+    local AXIS=$(jq -r ".s[$i][0]" $JPAR)
+    local POS=$(jq -r ".s[$i][1]" $JPAR)
+    local CODE=$(echo "${AXIS}_${POS}" | sed -e "s/%//")
+
+    local ref_space=$TMPDIR/${CODE}_refspace.nii.gz
+    local mri_slide_png=$TMPDIR/${CODE}_mri_img.png
+    local hist_slide_png=$TMPDIR/${CODE}_hist_img.png
+    local mrilike_slide_png=$TMPDIR/${CODE}_mrilike_img.png
+    local bf_slide_png=$TMPDIR/${CODE}_bf.png
+    local all_png=("$mri_slide_png" "$hist_slide_png" \
+                   "$mrilike_slide_png" "$bf_slide_png")
+    local qc_png=$SPECIMEN_QCDIR/historeg_qc_${id}_${block}_${CODE}.png
+
+    # Extract the slice of interest from the RGB splat volume
+    c3d -mcs $(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE) \
+      -foreach -slice $AXIS $POS -clip 0 255 \
+      -int 0 -resample-mm 0.05x0.05x0.05mm -endfor \
+      -type uchar -omc $hist_slide_png \
+      -scale 0 -o $ref_space
+
+    c3d -mcs $(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE) \
+      -slice $AXIS $POS -stretch 0 98% 0 255 -clip 0 255  \
+      -int 0 -resample-mm 0.05x0.05x0.05mm \
+      -type uchar -o $mrilike_slide_png
+
+    # Extract matching slide from MRI
+    c3d $ref_space $HIRES_MRI_TO_BFVIS_WARPED \
+      -reslice-identity -stretch 0 98% 0 255 -clip 0 255 \
+      -type uchar -o $mri_slide_png
+
+    # Extract matching slide from blockface
+    c3d $ref_space -popas R -mcs $BFVIS_RGB \
+      -foreach -insert R 1 -reslice-identity -endfor \
+      -type uchar -omc $bf_slide_png
+
+    # Add grids
+    for MYPNG in ${all_png[*]}; do
+
+      # Add gridlines
+      local COLOR="black"
+      if [[ $MYPNG == $mri_slide_png || $MYPNG == $mrilike_slide_png ]]; then
+        COLOR="white"
+      fi
+
+      $ROOT/scripts/ashs_grid.sh -o 0.25 -s 25 -c $COLOR $MYPNG $MYPNG
+      $ROOT/scripts/ashs_grid.sh -o 0.75 -s 125 -c $COLOR $MYPNG $MYPNG
+
+    done
+
+    # Montage the images into one QC file
+    montage -tile 2x2 -geometry +5+5 -mode Concatenate \
+      ${all_png[*]} $qc_png
+
+  done
+
+}
+
+
+function block_final_qc_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "block_final_qc_${id}_${block}" \
+      $0 block_final_qc $id $block
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "block_final_qc_*" /bin/sleep 0
+
+}
+
 
 function main()
 {
