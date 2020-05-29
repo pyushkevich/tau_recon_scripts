@@ -2,48 +2,36 @@
 # ====================================
 # Main reconstruction script
 # ====================================
-<<'DOCSTRING'
+# This script contains the following top-level commands:
+#
+# rsync_histo_all [RE]                    Pull features/densities (PY2)
+# rsync_histo_annot_all [RE]              Pull annotations
+# preproc_histology_all [RE]              Generate RGB masks (needed?)
+#
+# recon_blockface_all [RE]                Blockface to 3D volume
+# process_mri_all [RE]                    MRI 7T to 9.4T
+# register_blockface_all [RE]             MRI to blockface
+# recon_histo_all [RE] [skip_reg]         Histology recon and splatting
+#
+# compute_regeval_metrics_all [RE]        Compute registration metrics
+#
+# match_ihc_to_nissl_all <stain> [RE]     Match tau, etc to NISSL
+# splat_density_all <stain> <model> [RE]  Generate block density maps
+# merge_splat_all <stain> <model> [RE]    Splat to specimen MRI space
 
-This script contains the following top-level commands:
-
-rsync_histo_all [RE]                    Pull features/densities (PY2)
-rsync_histo_annot_all [RE]              Pull annotations
-preproc_histology_all [RE]              Generate RGB masks (needed?)
-
-recon_blockface_all [RE]                Blockface to 3D volume
-process_mri_all [RE]                    MRI 7T to 9.4T
-register_blockface_all [RE]             MRI to blockface
-recon_histo_all [RE] [skip_reg]         Histology recon and splatting
-
-compute_regeval_metrics_all [RE]        Compute registration metrics
-
-match_ihc_to_nissl_all <stain> [RE]     Match tau, etc to NISSL
-splat_density_all <stain> <model> [RE]  Generate block density maps
-merge_splat_all <stain> <model> [RE]    Splat to specimen MRI space
-DOCSTRING
-
-
+# Read local configuration
+# shellcheck source=src/common.sh
 set -x -e
-ROOT=/data/picsl/pauly/tau_atlas
-mkdir -p $ROOT/dump
+if [[ $TAU_ATLAS_ROOT ]]; then
+  . $TAU_ATLAS_ROOT/scripts/common.sh
+else
+  . "$(dirname $0)/common.sh"
+fi
 
 # Histoannot server options
 PHAS_SERVER="https://histo.itksnap.org"
 PHAS_ANNOT_TASK=2
 PHAS_REGEVAL_TASK=6
-
-# Set the paths for the tools
-export PATH=$ROOT/bin:/data/picsl/pauly/bin:/data/picsl/pauly/bin/ants:$PATH
-export LD_LIBRARY_PATH=$ROOT/lib:$LD_LIBRARY_PATH
-
-# The directory with manifest files
-MDIR=$ROOT/manifest
-
-# Make sure there is a tmpdir
-if [[ ! $TMPDIR ]]; then
-  TMPDIR=/tmp/recon_${PPID}
-  mkdir -p $TMPDIR
-fi
 
 # Common QSUB options
 QSUBOPT="-cwd -V -j y -o $ROOT/dump ${RECON_QSUB_OPT}"
@@ -720,6 +708,12 @@ function recon_blockface()
     -omc $BF_RECON_NII
 }
 
+function pybatch()
+{
+  export TAU_ATLAS_ROOT=$ROOT
+  $ROOT/scripts/pybatch.sh -o $ROOT/dump "$@"
+}
+
 function recon_blockface_all()
 {
   # Read an optional regular expression from command line
@@ -729,14 +723,13 @@ function recon_blockface_all()
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
 
     # Submit the jobs
-    qsub $QSUBOPT -N "recon_bf_${id}_${block}" \
-      -l h_vmem=16G -l s_vmem=16G \
+    pybatch -N "recon_bf_${id}_${block}" -m 16G \
       $0 recon_blockface $id $block $args
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "recon_bf_*" /bin/sleep 0
+  pybatch -w "recon_bf_*"
 }
 
 # Perform registration between two MRI scans, preprocessing for block registration
@@ -836,14 +829,16 @@ function process_mri_all()
   cat $MDIR/moldmri_src.txt | grep "$REGEXP" | while read -r id dir orient args; do
 
     # Submit the jobs
-    qsub $QSUBOPT -N "mri_reg_${id}" \
-      -l h_vmem=16G -l s_vmem=16G \
+        pybatch -N "recon_bf_${id}_${block}" -m 16G \
+      $0 recon_blockface $id $block $args
+
+    pybatch -N "mri_reg_${id}" -m 16G \
       $0 process_mri $id $orient $args
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "mri_reg_*" /bin/sleep 0
+  pybatch -w "mri_reg_*"
 }
 
 

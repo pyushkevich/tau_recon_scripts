@@ -1,13 +1,12 @@
-#!/bin/bash
+  #!/bin/bash
 set -x -e
-RSYNC_ROOT=10.150.13.41:/volume1/Histology/2018_UCLM
-ROOT=/data/picsl/pauly/tau_atlas
 
-# The script directory where script files are located
-SDIR=$ROOT/scripts
-
-# The directory with manifest files
-MDIR=$ROOT/manifest
+# Read local configuration
+if [[ $ROOT ]]; then
+  . $ROOT/scripts/common.sh
+else
+  . "$(dirname $0)/common.sh"
+fi
 
 # Parse the manifest file
 function copy_blockface()
@@ -19,7 +18,7 @@ function copy_blockface()
     mkdir -p $IDIR
 
     # Rsync the files
-    rsync -av "$RSYNC_ROOT/${REMOTEDIR}/*${BLOCK}_??_??.jpg" $IDIR/
+    gsutil -m cp -n "gs://mtl_histology/${ID}/bf_raw/${ID}_${BLOCK}_??_??.jpg" $IDIR/
 
   done < $MDIR/blockface_src.txt
 }
@@ -35,7 +34,7 @@ function copy_mold_mri()
 
     # Copy needed files
     for fn in mtl7t.nii.gz contour_image.nii.gz slitmold.nii.gz holderrotation.mat; do
-      rsync -av $SDIR/$fn $IDIR/
+      rsync -av ${MOLD_SRC_DIR?}/$SDIR/$fn $IDIR/
     done
 
   done < $MDIR/moldmri_src.txt
@@ -63,7 +62,13 @@ function copy_hires_mri()
     fi
 
     # Copy needed files
-    fw download -o $FN "$FWPATH"
+    docker run \
+      -v ~/.config/flywheel:/root/.config/flywheel:rw \
+      -v $IDIR:/fw:rw \
+      pyushkevich/flywheel-cli:latest \
+      fw download -o "$FN" "$FWPATH"
+
+    # fw download -o $FN "$FWPATH"
 
     # Compress if needed
     if [[ $FN =~ nii$ ]]; then
@@ -99,7 +104,7 @@ function setup_manual_mri_regs()
 }
 
 # Main entrypoint
-copy_blockface
-copy_mold_mri
+# copy_blockface
+# copy_mold_mri
 copy_hires_mri
 setup_manual_mri_regs
