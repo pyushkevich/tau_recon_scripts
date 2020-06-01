@@ -802,7 +802,8 @@ function process_mri()
     -o $MOLD_WORKSPACE_SRC
 
   # Add each of the blocks to it
-  for block in $(ls $ROOT/work/${id}/blockface); do
+  local BLOCKS=$(cat $MDIR/blockface_param.txt | awk -v s=${id} '$1==s {print $2}')
+  for block in $BLOCKS; do
     
     set_block_vars $id $block
 
@@ -829,11 +830,8 @@ function process_mri_all()
   cat $MDIR/moldmri_src.txt | grep "$REGEXP" | while read -r id dir orient args; do
 
     # Submit the jobs
-        pybatch -N "recon_bf_${id}_${block}" -m 16G \
+    pybatch -N "recon_bf_${id}_${block}" -m 16G \
       $0 recon_blockface $id $block $args
-
-    pybatch -N "mri_reg_${id}" -m 16G \
-      $0 process_mri $id $orient $args
 
   done
 
@@ -1040,14 +1038,13 @@ function register_blockface_all()
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
 
     # Submit the jobs
-    qsub $QSUBOPT -N "reg_bf_${id}_${block}" \
-      -l h_vmem=8G -l s_vmem=8G \
+    pybatch -N "reg_bf_${id}_${block}" -m 8G \
       $0 register_blockface $id $block
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "reg_bf_*" /bin/sleep 0
+  pybatch -w "reg_bf_*"
 }
 
 
@@ -1694,13 +1691,13 @@ function preproc_histology_all()
     pull_histo_match_manifest $id $block
 
     # Submit the jobs
-    qsub $QSUBOPT -N "preproc_histo_${id}_${block}" \
+    pybatch -N "preproc_histo_${id}_${block}" -m 4G \
       $0 preproc_histology $id $block
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "preproc_histo_*" /bin/sleep 0
+  pybatch -w "preproc_histo_*"
 }
 
 
@@ -1720,14 +1717,13 @@ function recon_histo_all()
     pull_histo_match_manifest $id $block
 
     # Submit the jobs
-    qsub $QSUBOPT -N "recon_histo_${id}_${block}" \
-      -l h_vmem=8G -l s_vmem=8G \
+    pybatch -N "recon_histo_${id}_${block}" -m 8G \
       $0 recon_histology $id $block $skip_reg
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "recon_histo_*" /bin/sleep 0
+  pybatch -w "recon_histo_*"
 }
 
 
