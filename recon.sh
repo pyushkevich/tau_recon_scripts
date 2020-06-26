@@ -17,6 +17,8 @@
 #
 # match_ihc_to_nissl_all <stain> [RE]     Match tau, etc to NISSL
 # splat_density_all <stain> <model> [RE]  Generate block density maps
+#
+# merge_preproc_all [RE]                  Prepare to splat to specimen MRI space
 # merge_splat_all <stain> <model> [RE]    Splat to specimen MRI space
 
 # Read local configuration
@@ -35,6 +37,9 @@ PHAS_REGEVAL_TASK=6
 
 # Common QSUB options
 QSUBOPT="-cwd -V -j y -o $ROOT/dump ${RECON_QSUB_OPT}"
+
+# Target image for dot-align
+DOT_ALIGN_TARGET="HNL-29-18"
 
 # Set common variables for a specimen
 function set_specimen_vars()
@@ -113,6 +118,15 @@ function set_specimen_vars()
   HIRES_MRI_MANUAL_PHGSEG=$ROOT/manual/$id/mri_seg/${id}_axisalign_phgsegshape_multilabel.nii.gz
   HIRES_MRI_MANUAL_PHGSEG_AFFINE=$ROOT/manual/$id/mri_seg/${id}_raw_to_axisalign.mat
 
+  # PMDots in native MRI space
+  HIRES_MRI_MANUAL_PMDOTS_NATIVE=$ROOT/manual/$id/pmdots/${id}_native_PMDots.nii.gz
+  HIRES_MRI_MANUAL_PMDOTS_HDRFIX=$MRI_WORK_DIR/${id}_native_pmdots_hdrfix.nii.gz
+  HIRES_MRI_MANUAL_PMDOTS_VIS=$MRI_WORK_DIR/${id}_pmdots_hires_vis.nii.gz
+
+  # Groupwise alignment space
+  DOT_ALIGN_MATRIX=$MRI_WORK_DIR/${id}_dotalign.mat
+  DOT_ALIGN_HIRES_MRI=$MRI_WORK_DIR/${id}_mri_hires_dotalign.nii.gz
+
   # Location for the final QC files for this specimen. Final QC should all
   # go into a flat folder to make it easier to check with eog, etc.
   SPECIMEN_QCDIR=$ROOT/work/$id/qc
@@ -137,6 +151,10 @@ function set_specimen_density_vars()
 
   # The workspace with that
   SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.itksnap
+
+  # Alignment by dots
+  DOT_ALIGN_DENSITY_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_dotalign_density_${stain}_${model}.nii.gz
+  DOT_ALIGN_MASK_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_dotalign_mask_${stain}_${model}.nii.gz
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -830,8 +848,8 @@ function process_mri_all()
   cat $MDIR/moldmri_src.txt | grep "$REGEXP" | while read -r id dir orient args; do
 
     # Submit the jobs
-    pybatch -N "recon_bf_${id}_${block}" -m 16G \
-      $0 recon_blockface $id $block $args
+    pybatch -N "mri_reg_${id}" -m 16G \
+      $0 process_mri $id $orient
 
   done
 
@@ -2148,17 +2166,14 @@ function match_ihc_to_nissl()
     # Generate the manifest for processed slides
     echo $MATCHED_NISSL_SVS $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING >> $IHC_RGB_SPLAT_MANIFEST
 
-
-    # TODO: delete this, done above
-    c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 \
-      -type uchar -o $SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY
-
     # We also need a mask splatting manifest because we need to know where did the
     # density maps come from
     echo $MATCHED_NISSL_SVS $SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY >> $IHC_MASK_SPLAT_MANIFEST
 
     # Does the registration validation exist? If so, we need to also reslice it to
     # the NISSL space
+    # TODO: this is broken - fix the regval code!
+<<'BROKEN_IHC_REGVAL'
     local svs_regval=$(ls "$SPECIMEN_HISTO_REGVAL_ROOT/*__${svs}.png")
     if [[ $svs_regval && -f $svs_regval ]]; then
       
@@ -2169,6 +2184,7 @@ function match_ihc_to_nissl()
       # Add line to the splat file
       echo $svs $SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_CHUNKING >> $IHC_REGEVAL_SPLAT_MANIFEST
     fi
+BROKEN_IHC_REGVAL
 
   done < $HISTO_MATCH_MANIFEST
 
@@ -2303,12 +2319,11 @@ function splat_density_all()
   qsub $QSUBOPT -b y -sync y -hold_jid "splat_${stain}_${model}*" /bin/sleep 0
 }
 
-function merge_splat()
+# Preparatory steps for merging the per-block maps into a whole-MTL map
+function merge_preproc()
 {
-  read -r id stain model args <<< "$@"
-
+  read -r id args <<< "$@"
   set_specimen_vars $id
-  set_specimen_density_vars $id $stain $model
 
   # Extract the orientation into visualizable MRI space
   itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
@@ -2319,11 +2334,39 @@ function merge_splat()
   c3d $MOLD_BINARY $MOLD_MRI_MASK_NATIVESPC \
     -int 0 -reslice-matrix $MOLD_REORIENT_VIS \
     -resample-mm 0.2x0.2x0.2mm -trim 20vox -o $HIRES_MRI_VIS_REFSPACE
-  
+
   # Send the high-res MRI into the vis space
   greedy -d 3 \
     -rf $HIRES_MRI_VIS_REFSPACE -rm $HIRES_MRI $HIRES_MRI_VIS \
     -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP
+
+  # If there are PMdots present, apply warps to them to bring them into the mold-vis space
+  if [[ -f $HIRES_MRI_MANUAL_PMDOTS_NATIVE ]]; then
+
+    # Fix the header
+    c3d $HIRES_MRI $HIRES_MRI_MANUAL_PMDOTS_NATIVE \
+      -copy-transform -o $HIRES_MRI_MANUAL_PMDOTS_HDRFIX
+
+    # Map the dots into the vis space
+    greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
+      -ri LABEL 0.1mm -rm $HIRES_MRI_MANUAL_PMDOTS_HDRFIX $HIRES_MRI_MANUAL_PMDOTS_VIS \
+      -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP
+
+  fi
+}
+
+function merge_splat()
+{
+  read -r id stain model args <<< "$@"
+
+  # Setting variables first for target, then for supplied id
+  set_specimen_vars $DOT_ALIGN_TARGET
+  local DOT_ALIGN_TARGET_PMDOTS_VIS=$HIRES_MRI_MANUAL_PMDOTS_VIS
+
+  set_specimen_vars $id
+  set_specimen_density_vars $id $stain $model
+
+<<'SKIP'
 
   # Collect all the blocks
   local BLOCKS=$(cat $MDIR/blockface_param.txt | awk -v s=$id '$1==s {print $2}')
@@ -2389,6 +2432,30 @@ function merge_splat()
       -omc $SPECIMEN_NISSL_SPLAT_VIS
   fi
 
+SKIP
+
+  # If there are PMdots present, apply warps to them to bring them into the mold-vis space
+  if [[ -f $HIRES_MRI_MANUAL_PMDOTS_NATIVE ]]; then
+
+    # Align the dots to the target image, arbitrarily chosen
+    c3d \
+      $DOT_ALIGN_TARGET_PMDOTS_VIS $HIRES_MRI_MANUAL_PMDOTS_VIS \
+      -align-landmarks 7 $DOT_ALIGN_MATRIX
+
+    # Apply alignment to the vis-MRI
+    greedy -d 3 \
+      -rf $DOT_ALIGN_TARGET_PMDOTS_VIS -rm $HIRES_MRI $DOT_ALIGN_HIRES_MRI \
+      -r $DOT_ALIGN_MATRIX $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP
+
+    # Apply the alignment to the density map and mask
+    greedy -d 3 \
+      -rf $DOT_ALIGN_TARGET_PMDOTS_VIS \
+      -rm $SPECIMEN_DENSITY_SPLAT_VIS $DOT_ALIGN_DENSITY_SPLAT \
+      -rm $SPECIMEN_MASK_SPLAT_VIS $DOT_ALIGN_MASK_SPLAT \
+      -r $DOT_ALIGN_MATRIX
+
+  fi
+
   # Create a merged workspace
   itksnap-wt \
     -lsm "$HIRES_MRI_VIS" -psn "9.4T MRI" \
@@ -2397,12 +2464,33 @@ function merge_splat()
     -laa "$SPECIMEN_IHC_SPLAT_VIS" -psn "${stain} recon" -props-set-mcd RGB \
     -props-set-contrast LINEAR 0 255 \
     -laa "$SPECIMEN_DENSITY_SPLAT_VIS" \
-    -prl "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt " \
+    -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
     -psn "${stain} ${model}" \
     -prs LayerMetaData.Sticky 1 \
     -laa "$SPECIMEN_MASK_SPLAT_VIS" -psn "Recon mask" \
     -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
 }
+
+
+function merge_preproc_all()
+{
+  # Read required and optional parameters
+  read -r REGEXP args <<< "$@"
+
+  # Process the individual blocks
+  cat $MDIR/moldmri_src.txt | grep "$REGEXP" | while read -r id args; do
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "mergepre_${id}" \
+      -l h_vmem=16G -l s_vmem=16G \
+      $0 merge_preproc $id
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "mergepre_*" /bin/sleep 0
+}
+
 
 
 function merge_splat_all()
@@ -2415,7 +2503,7 @@ function merge_splat_all()
 
     # Submit the jobs
     qsub $QSUBOPT -N "merge_${stain?}_${model?}_${id}" \
-      -l h_vmem=8G -l s_vmem=8G \
+      -l h_vmem=16G -l s_vmem=16G \
       $0 merge_splat $id $stain $model
 
   done
@@ -2638,14 +2726,13 @@ function block_final_qc_all()
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
 
     # Submit the jobs
-    qsub $QSUBOPT -N "block_final_qc_${id}_${block}" \
+    pybatch -N "block_final_qc_${id}_${block}" -m 16G \
       $0 block_final_qc $id $block
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "block_final_qc_*" /bin/sleep 0
-
+  pybatch -w "block_final_qc_*"
 }
 
 
