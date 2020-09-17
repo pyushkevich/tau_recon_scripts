@@ -89,9 +89,9 @@ if __name__ == "__main__":
     # Generate a SVG of the curves for visualization
     dwg = svgwrite.Drawing(out_svg, size=(mri.shape[0], mri.shape[1]))
     for i in range(1, len(Xm)):
-        dwg.add(dwg.line(start=(Xm[i - 1][0], Xm[i - 1][1]), end=(Xm[i][0], Xm[i][1]), stroke='blue'))
+        dwg.add(dwg.line(start=(Xm[i - 1][0], Xm[i - 1][1]), end=(Xm[i][0], Xm[i][1]), stroke='orange', stroke_width=2))
     for i in range(1, len(Xh)):
-        dwg.add(dwg.line(start=(Xh[i - 1][0], Xh[i - 1][1]), end=(Xh[i][0], Xh[i][1]), stroke='red'))
+        dwg.add(dwg.line(start=(Xh[i - 1][0], Xh[i - 1][1]), end=(Xh[i][0], Xh[i][1]), stroke='red', stroke_width=2))
     dwg.save()
 
     sys.exit(0)
