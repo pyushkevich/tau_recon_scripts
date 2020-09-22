@@ -69,16 +69,39 @@ if __name__ == "__main__":
 
     # Compute pointwise distance matrix
     D=sdist.cdist(Ym,Yh)
-    d1,d2 = np.amin(D,0), np.amin(D,1)
+    dh,dm = np.amin(D,0), np.amin(D,1)
+
+    # From the end of each curve, trim the points that match to the end of the other curve
+    am,bm,ah,bh = 0,len(Ym)-1,0,len(Yh)-1
+
+    while am < bm and (D[am, 0] == dm[am] or D[am,len(Yh)-1] == dm[am]):
+        am = am + 1
+
+    while bm > am and (D[bm, 0] == dm[bm] or D[bm, len(Yh) - 1] == dm[bm]):
+        bm = bm - 1
+
+    while ah < bh and (D[0, ah] == dh[ah] or D[len(Ym) - 1, ah] == dh[ah]):
+        ah = ah + 1
+
+    while bh > ah and (D[0, bh] == dh[bh] or D[len(Ym) - 1, bh] == dh[bh]):
+        bh = bh - 1
+
+    print("Clipping MRI by %d and %d, Histo by %d and %d points" % (am, len(Ym)-bm, ah, len(Yh)-bh))
+
+    # Extract just the subcurves
+    Ym_clip = Ym[range(am,bm+1),:]
+    Yh_clip = Yh[range(ah,bh+1),:]
+    D=sdist.cdist(Ym_clip,Yh_clip)
+    dh,dm = np.amin(D,0), np.amin(D,1)
 
     # Compute some standard metrics
     mtx = {
         "label": label,
-        "bde_median": np.mean((np.median(d1), np.median(d2))),
-        "bde_mad": np.mean((np.mean(d1), np.mean(d2))),
-        "bde_rms": np.sqrt(np.mean((np.mean(d1**2), np.mean(d2**2)))),
-        "bde_hd95": np.mean((np.quantile(d1, 0.95), np.quantile(d2, 0.95))),
-        "bde_hd": np.max((np.max(d1), np.max(d2))),
+        "bde_median": np.mean((np.median(dh), np.median(dm))),
+        "bde_mad": np.mean((np.mean(dh), np.mean(dm))),
+        "bde_rms": np.sqrt(np.mean((np.mean(dh**2), np.mean(dm**2)))),
+        "bde_hd95": np.mean((np.quantile(dh, 0.95), np.quantile(dm, 0.95))),
+        "bde_hd": np.max((np.max(dh), np.max(dm))),
         "frechet" : sim.frechet_dist(Ym, Yh)
     }
 
@@ -86,12 +109,28 @@ if __name__ == "__main__":
     with open(out_json, "w") as outfile:
         json.dump(mtx, outfile)
 
+    # Ym = Ym_clip
+    # Yh = Yh_clip
+
     # Generate a SVG of the curves for visualization
     dwg = svgwrite.Drawing(out_svg, size=(mri.shape[0], mri.shape[1]))
-    for i in range(1, len(Xm)):
+
+    print(am,bm,ah,bh)
+
+    for i in range(1, am+1):
+        dwg.add(dwg.line(start=(Xm[i - 1][0], Xm[i - 1][1]), end=(Xm[i][0], Xm[i][1]), stroke='yellow', stroke_width=2))
+    for i in range(am+1, bm+1):
         dwg.add(dwg.line(start=(Xm[i - 1][0], Xm[i - 1][1]), end=(Xm[i][0], Xm[i][1]), stroke='orange', stroke_width=2))
-    for i in range(1, len(Xh)):
+    for i in range(bm+1, len(Ym)):
+        dwg.add(dwg.line(start=(Xm[i - 1][0], Xm[i - 1][1]), end=(Xm[i][0], Xm[i][1]), stroke='yellow', stroke_width=2))
+
+    for i in range(1, ah+1):
+        dwg.add(dwg.line(start=(Xh[i - 1][0], Xh[i - 1][1]), end=(Xh[i][0], Xh[i][1]), stroke='yellow', stroke_width=2))
+    for i in range(ah+1, bh+1):
         dwg.add(dwg.line(start=(Xh[i - 1][0], Xh[i - 1][1]), end=(Xh[i][0], Xh[i][1]), stroke='red', stroke_width=2))
+    for i in range(bh+1, len(Yh)):
+        dwg.add(dwg.line(start=(Xh[i - 1][0], Xh[i - 1][1]), end=(Xh[i][0], Xh[i][1]), stroke='yellow', stroke_width=2))
+
     dwg.save()
 
     sys.exit(0)

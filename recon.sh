@@ -563,6 +563,7 @@ function set_ihc_slice_vars()
 
   # QC Image
   SLIDE_IHC_TO_NISSL_QC=${SLICE_IHC_TO_NISSL_BASE}_qc.png
+  SLIDE_IHC_TO_NISSL_OVERLAP_STAT=${SLICE_IHC_TO_NISSL_BASE}_overlap.json
 
   # Resliced evaluation curves
   SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_GLOBAL=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_reslice_regeval_global.nii.gz
@@ -2344,17 +2345,18 @@ function match_ihc_to_nissl()
     set_ihc_slice_vars $id $block $MATCHED_NISSL_SVS NISSL $section $MATCHED_NISSL_SLIDE
 
     # TODO: delete this!!!
-    if [[ ! -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
-      continue
-    fi
+    ##if [[ ! -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
+    ##  continue
+    ##fi
 
     # Copy important variables
     local NISSL_SLIDE_RGB=$SLIDE_RGB
+    local NISSL_SLIDE_HEM_SCALAR=$SLIDE_HEM_SCALAR
     local NISSL_SLIDE_MASK=$SLIDE_MASK
     local NISSL_SLIDE_LONG_NAME=$SLIDE_LONG_NAME
 
     # The mask and RGB of the NISSL slide must be present
-    if [[ ! -f $NISSL_SLIDE_RGB || ! -f $NISSL_SLIDE_MASK ]]; then 
+    if [[ ! -f $NISSL_SLIDE_HEM_SCALAR || ! -f $NISSL_SLIDE_MASK ]]; then
       echo "Missing NISSL slide $MATCHED_NISSL_SVS for IHC slide $svs"
       continue
     fi
@@ -2374,17 +2376,8 @@ function match_ihc_to_nissl()
 
     else
 
-      # Take negative of the slides for better registration
-      local NISSL_NEG=$TMPDIR/${NISSL_SLIDE_LONG_NAME}_neg.nii.gz
-      local IHC_NEG=$TMPDIR/${SLIDE_LONG_NAME}_neg.nii.gz
-
-      c2d -mcs $NISSL_SLIDE_RGB -foreach -stretch 0 255 255 0 -endfor -type uchar -omc $NISSL_NEG
-
-      # Use the hemotoxylin channel for intensity matching
-      c2d -mcs $SLIDE_HEM_RGB -foreach -stretch 0 255 255 0 -endfor -type uchar -omc $IHC_NEG
-
       # Perform the whole-slide registration (rigid and deformable)
-      greedy -d 2 -a -dof 6 -i $NISSL_NEG $IHC_NEG -o $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
+      greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_HEM_SCALAR $SLIDE_HEM_SCALAR -o $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
         -m NCC 16x16 -n 100x40x10x0 -search 10000 flip 5 -ia-image-centers -gm $NISSL_SLIDE_MASK
 
       # Chunk up the registration mask
@@ -2411,8 +2404,10 @@ function match_ihc_to_nissl()
         local I_MASK_EXTRAPOLATED=$TMPDIR/chunk_mask_extrap_${i}.nii.gz
         local I_RIGID=$TMPDIR/chunk_rigid_${i}.mat
         local I_WARP=$TMPDIR/chunk_warp_${i}.nii.gz
+        local I_WARP_INV=$TMPDIR/chunk_warp_inv_${i}.nii.gz
         local I_COMP=$TMPDIR/chuck_comp_warp_${i}.nii.gz
         local I_COMP_MASKED=$TMPDIR/chuck_comp_warp_masked_${i}.nii.gz
+        local I_MASK_TO_IHC=$TMPDIR/chunk_mask_to_ihc_${i}.nii.gz
 
         # Extract particular region
         c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh $i $i 1 0 -o $I_MASK
@@ -2420,18 +2415,23 @@ function match_ihc_to_nissl()
 
         # Perform rigid registration
         greedy -d 2 -a -dof 6 \
-          -i $NISSL_NEG $IHC_NEG \
+          -i $NISSL_SLIDE_HEM_SCALAR $SLIDE_HEM_SCALAR \
           -o $I_RIGID -m NCC 16x16 -n 100x40x10x0 \
           -ia $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID -gm $I_MASK
 
         # Peform deformable
         greedy -d 2 \
-          -i $NISSL_NEG $IHC_NEG \
-          -it $I_RIGID -o $I_WARP -m NCC 16x16 -n 100x40x10x0 \
-          -s 3.0mm 0.5mm -gm $I_MASK
+          -i $NISSL_SLIDE_HEM_SCALAR $SLIDE_HEM_SCALAR \
+          -it $I_RIGID -o $I_WARP -oinv $I_WARP_INV -sv -m NCC 16x16 -n 100x40x10x0 \
+          -s 3.0mm 0.5mm -wp 0 -gm $I_MASK
 
         # Compose rigid and deformable
-        greedy -d 2 -rf $NISSL_NEG -r $I_WARP $I_RIGID -rc $I_COMP
+        greedy -d 2 -rf $NISSL_SLIDE_HEM_SCALAR -r $I_WARP $I_RIGID -rc $I_COMP
+
+        # Map the mask into the moving (IHC) image space for overlap computation
+        greedy -d 2 -rf $SLIDE_HEM_SCALAR -ri NN \
+          -rm $I_MASK $I_MASK_TO_IHC \
+          -r $I_RIGID,-1 $I_WARP_INV
 
         # Mask the warp (use extrapolation to have extended warp outside pieces)
         c2d -mcs $I_COMP $I_MASK_EXTRAPOLATED -popas M -foreach -push M -times -endfor -omc $I_COMP_MASKED
@@ -2442,6 +2442,26 @@ function match_ihc_to_nissl()
       c2d -mcs $TMPDIR/chuck_comp_warp_masked_*.nii.gz \
         -foreach-comp 2 -mean -scale $N_CHUNKS -endfor \
         -omc $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
+
+      # Combine the masks in IHC space
+      c3d $TMPDIR/chunk_mask_to_ihc_*.nii.gz \
+        -accum -add -endaccum -o $TMPDIR/overlap_ihc.nii.gz
+
+      # Map the overlap image back into the NISSL space (for display)
+      greedy -d 2 -rf $NISSL_SLIDE_RGB \
+        -ri NN -rm $TMPDIR/overlap_ihc.nii.gz $TMPDIR/overlap_nissl.nii.gz \
+        -r $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
+
+      # Use the overlap image to generate statistics and a heat map
+      c2d $TMPDIR/overlap_nissl.nii.gz -as X \
+        -pad 1x1vox 1x1vox $N_CHUNKS -colormap jet \
+        -foreach -insert X 1 -reslice-identity -endfor \
+        -type uchar -omc $TMPDIR/ihc_overlap.png
+
+      local S1=$(c2d $TMPDIR/overlap_nissl.nii.gz -clip 0 1 -voxel-sum | awk '{print $3}')
+      local S2=$(c2d $TMPDIR/overlap_nissl.nii.gz -shift -1 -clip 0 7 -voxel-sum | awk '{print $3}')
+      echo $S1 $S2 | awk '{printf "{\"overlap_ratio\": %f}\n", $2*1.0/$1}' \
+        > $SLIDE_IHC_TO_NISSL_OVERLAP_STAT
 
       # Reslice using the chunking warp
       chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_RGB $SLIDE_RGB \
@@ -2467,16 +2487,17 @@ function match_ihc_to_nissl()
       c2d -mcs $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING \
         -type uchar -omc $TMPDIR/ihc_chunking.png
 
-      for MYPNG in nissl.png mask.png ihc_global.png ihc_chunking.png; do
+      for MYPNG in nissl.png ihc_global.png mask.png ihc_chunking.png ihc_overlap.png; do
         $ROOT/scripts/ashs_grid.sh -o 0.25 -s 25 -c "white" $TMPDIR/$MYPNG $TMPDIR/$MYPNG
         $ROOT/scripts/ashs_grid.sh -o 0.75 -s 125 -c "white" $TMPDIR/$MYPNG $TMPDIR/$MYPNG
       done
 
-      montage -tile 2x2 -geometry +5+5 -mode Concatenate \
+      montage -tile 3x2 -geometry +5+5 -mode Concatenate \
         $TMPDIR/nissl.png \
-        $TMPDIR/mask.png \
         $TMPDIR/ihc_global.png \
+        $TMPDIR/mask.png \
         $TMPDIR/ihc_chunking.png \
+        $TMPDIR/ihc_overlap.png \
         $SLIDE_IHC_TO_NISSL_QC
 
     fi
@@ -2608,13 +2629,13 @@ function match_ihc_to_nissl_all()
     pull_histo_match_manifest $id $block
 
     # Submit the jobs
-    qsub $QSUBOPT -N "match_nissl_${stain?}_${id}_${block}" \
+    pybatch -N "match_nissl_${stain?}_${id}_${block}" -m 8G \
       $0 match_ihc_to_nissl $id $block $stain $skip_reg
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "match_nissl_${stain}*" /bin/sleep 0
+  pybatch -w "match_nissl_${stain}*"
 }
 
 function splat_density_all()
@@ -2629,14 +2650,13 @@ function splat_density_all()
     pull_histo_match_manifest $id $block
 
     # Submit the jobs
-    qsub $QSUBOPT -N "splat_${stain?}_${model?}_${id}_${block}" \
-      -l h_vmem=8G -l s_vmem=8G \
+    pybatch -N "splat_${stain?}_${model?}_${id}_${block}" -m 8G \
       $0 splat_density $id $block $stain $model
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "splat_${stain}_${model}*" /bin/sleep 0
+  pybatch -w "splat_${stain}_${model}*"
 }
 
 # Preparatory steps for merging the per-block maps into a whole-MTL map
@@ -2668,13 +2688,97 @@ function merge_preproc()
   c3d $TMPDIR/mold_contour_vis.nii.gz -thresh -inf 0 1 0 -o $MOLD_MRI_MASK_VIS
 }
 
+function make_whole_specimen_density_slice()
+{
+  local AXIS SLICE SWAPDIM DENSITY_SCALE OUT
+  read -r AXIS SLICE SWAPDIM DENSITY_SCALE OUT args <<< "$@"
+
+  c3d $TMPDIR/mri_vol.nii.gz -slice $AXIS $SLICE -swapdim $SWAPDIM -o $TMPDIR/mri.nii.gz
+  c3d $TMPDIR/density_vol.nii.gz -slice $AXIS $SLICE -info -swapdim $SWAPDIM -o $TMPDIR/dens.nii.gz
+  c2d $TMPDIR/mri.nii.gz $TMPDIR/dens.nii.gz \
+    -scale $DENSITY_SCALE -stretch 0 1 0 63 -shift 0.5 -floor -info -clip 0 63 \
+    -oli $ROOT/scripts/hot_colormap.txt 1 -type uchar -omc $OUT
+
+  c3d $TMPDIR/dmask_vol.nii.gz -slice $AXIS $SLICE -swapdim $SWAPDIM \
+    -thresh 0.5 inf 255 0 -type uchar -o ${OUT/.png/_mask.png}
+}
+
+function make_whole_specimen_density_figure()
+{
+  # Read slice indices and target orientations
+  local SAG_SLICE CS1 CS2 CS3 OS OC DS
+  read -r id stain model <<< "$@"
+
+  # Load specimen vars
+  set_specimen_vars $id
+  set_specimen_density_vars $id $stain $model
+
+  # Read the slice indices and orientation codes
+  read -r SAG_SLICE CS1 CS2 CS3 OS OC \
+    <<< "$(awk -v id=$id '$1==id {print $2,$3,$4,$5,$6,$7}' $MDIR/final_slice_vis.txt)"
+
+  if [[ ! $SAG_SLICE ]]; then
+    echo "No figure specification data for $id"
+    return
+  fi
+
+  # Scaling factors for different densities
+  DS="$(awk -v S=$stain -v M=$model '$1==S && $2==M {print $3}' $MDIR/density_scaling_vis.txt)"
+
+  # Create 3D volumes for density sampling
+  c3d $HIRES_MRI_VIS \
+    -stretch 0 99% 0 255 -clip 0 255 \
+    -o $TMPDIR/mri_vol.nii.gz
+
+  c3d $SPECIMEN_DENSITY_SPLAT_VIS \
+    -smooth-fast 2x0.2x0.2vox -o $TMPDIR/density_vol.nii.gz
+
+  cp -av $SPECIMEN_MASK_SPLAT_VIS $TMPDIR/dmask_vol.nii.gz
+
+  # Create sagittal slice
+  make_whole_specimen_density_slice z $((SAG_SLICE-1)) $OS $DS $TMPDIR/sag.png
+
+  # Mark selected slices
+  c3d $TMPDIR/dmask_vol.nii.gz -cmv -pop \
+    -shift 1 -replace $CS1 0 $CS2 0 $CS3 0 -thresh 0 0 255 0 \
+    -slice z $((SAG_SLICE-1)) -swapdim $OS -o $TMPDIR/lines.nii.gz
+
+  c2d -mcs $TMPDIR/sag.png -dup $TMPDIR/lines.nii.gz -copy-transform -popas K \
+    -foreach -push K -max -endfor -type uchar -omc $TMPDIR/sag_lines.png
+
+  # Mask the sagittal
+  c2d $TMPDIR/sag_mask.png -thresh 1 inf 1 0 -trim 0vox -pad-to 500x320vox 0 -mcs -popas M \
+    $TMPDIR/sag_lines.png -foreach -insert M 1 -reslice-identity -endfor \
+    -type uchar -omc $TMPDIR/sag_lines_trim.png
+
+  # Extract coronal slices
+  for s in $CS1 $CS2 $CS3; do
+    make_whole_specimen_density_slice y $((s-1)) $OC $DS $TMPDIR/cor_${s}.png
+  done
+
+  # Combine the masks
+  c2d $TMPDIR/cor_${CS1}_mask.png $TMPDIR/cor_${CS2}_mask.png $TMPDIR/cor_${CS3}_mask.png -add -add \
+    -thresh 1 inf 1 0 -trim 0vox -pad-to 320x320vox 0 -type uchar -o $TMPDIR/cor_mask.nii.gz
+
+  for s in $CS1 $CS2 $CS3; do
+    c2d $TMPDIR/cor_mask.nii.gz -mcs -popas M $TMPDIR/cor_${s}.png \
+      -foreach -insert M 1 -reslice-identity -endfor \
+      -type uchar -omc $TMPDIR/cor_trim_${s}.png
+  done
+
+  # Montage
+  montage \
+    $TMPDIR/cor_trim_${CS1}.png $TMPDIR/cor_trim_${CS2}.png \
+    $TMPDIR/cor_trim_${CS3}.png $TMPDIR/sag_lines_trim.png \
+    -tile 4x1 -geometry +0+0 $SPECIMEN_QCDIR/${id}_${stain}_${model}_montage.png
+}
+
+
 function merge_splat()
 {
   read -r id stain model args <<< "$@"
   set_specimen_vars $id
   set_specimen_density_vars $id $stain $model
-
-<<'SKIP'
 
   # Collect all the blocks
   local BLOCKS=$(cat $MDIR/blockface_param.txt | awk -v s=$id '$1==s {print $2}')
@@ -2740,8 +2844,6 @@ function merge_splat()
       -omc $SPECIMEN_NISSL_SPLAT_VIS
   fi
 
-SKIP
-
   # If the specimen has been warped to the template, apply this warp
   if [[ -f $TEMPLATE_INIT_MATRIX && -f $TEMPLATE_HIRES_WARP ]]; then
 
@@ -2767,6 +2869,9 @@ SKIP
     -prs LayerMetaData.Sticky 1 \
     -laa "$SPECIMEN_MASK_SPLAT_VIS" -psn "Recon mask" \
     -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
+
+  # Generate a figure for paper
+  make_whole_specimen_density_figure $id $stain $model
 }
 
 
@@ -2906,13 +3011,26 @@ function rsync_histo_annot()
     SVG_CURL_OPTS="-d strip_width=1000"
     download_svg $PHAS_REGEVAL_TASK $svs $HISTO_REGEVAL_DIR
 
+    # Remove the cleaned annotation
+    rm -rf $SLIDE_REGEVAL_CLEAN_PNG
+
     # Apply a cleaning operation to these downloads
     if [[ -f $SLIDE_REGEVAL_PNG ]]; then
-      c2d $HISTO_REGEVAL_DIR/${svs}_annot.png \
-        -as X -thresh 0 17 1 0 -push X -thresh 18 59 1 0 -push X -thresh 60 inf 1 0 \
-        -foreach -smooth 2mm -endfor -vote -replace 0 0 1 34 2 85 \
-        -type uchar -o $SLIDE_REGEVAL_CLEAN_PNG
+
+      # Check if the PNG is empty
+      local VSUM=$(c2d $SLIDE_REGEVAL_PNG -voxel-sum | awk '{print $3}')
+      if [[ $VSUM != "0" ]]; then
+        c2d $SLIDE_REGEVAL_PNG \
+          -as X -thresh 0 17 1 0 -push X -thresh 18 59 1 0 -push X -thresh 60 inf 1 0 \
+          -foreach -smooth 2mm -endfor -vote -replace 0 0 1 34 2 85 \
+          -type uchar -o $SLIDE_REGEVAL_CLEAN_PNG
+      else
+        echo "Empty annotation $SLIDE_REGEVAL_PNG"
+      fi
     fi
+
+    # Some slides contain no data (oddly)
+
 
     # Anatomical annotation is performed only on NISSL slides
     if [[ $stain != "NISSL" ]]; then continue; fi
