@@ -206,8 +206,9 @@ function preprocess_specimen_slides()
 
 function preprocess_slides_all()
 {
+  read -r force args <<< "$@"
   for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
-    preprocess_specimen_slides $id
+    preprocess_specimen_slides $id $force
   done
 }
 
