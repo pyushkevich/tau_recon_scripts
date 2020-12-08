@@ -6,15 +6,20 @@
 
 This script contains the following top-level commands:
 
-rsync_histo_all [REGEXP]                    Pull features/densities (PY2)
-preproc_histology_all [REGEXP]              Generate RGB images, masks
+rsync_histo_all [RE]                    Pull features/densities (PY2)
+rsync_histo_annot_all [RE]              Pull annotations
+preproc_histology_all [RE]              Generate RGB masks (needed?)
 
-recon_blockface_all [REGEXP]
-process_mri_all [REGEXP]
-register_blockface_all [REGEXP]
-recon_histo_all [REGEXP] [skip_reg]
+recon_blockface_all [RE]                Blockface to 3D volume
+process_mri_all [RE]                    MRI 7T to 9.4T
+register_blockface_all [RE]             MRI to blockface
+recon_histo_all [RE] [skip_reg]         Histology recon and splatting
 
+compute_regeval_metrics_all [RE]        Compute registration metrics
 
+match_ihc_to_nissl_all <stain> [RE]     Match tau, etc to NISSL
+splat_density_all <stain> <model> [RE]  Generate block density maps
+merge_splat_all <stain> <model> [RE]    Splat to specimen MRI space
 DOCSTRING
 
 
@@ -107,6 +112,9 @@ function set_specimen_vars()
   # Location where to place splats
   SPECIMEN_SPLAT_DIR=$ROOT/work/$id/historeg/whole
 
+  # Splatted NISSL
+  SPECIMEN_NISSL_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_rgb_NISSL.nii.gz
+
   # Manual tracings on high-resolution MRI for registration validation (Sydney)
   HIRES_MRI_MANUAL_TRACE=$ROOT/manual/$id/reg_eval/${id}_MRI_val_seg.nii.gz
 
@@ -116,6 +124,10 @@ function set_specimen_vars()
   # Manual segmentation of the PHG from Sadhana
   HIRES_MRI_MANUAL_PHGSEG=$ROOT/manual/$id/mri_seg/${id}_axisalign_phgsegshape_multilabel.nii.gz
   HIRES_MRI_MANUAL_PHGSEG_AFFINE=$ROOT/manual/$id/mri_seg/${id}_raw_to_axisalign.mat
+
+  # Location for the final QC files for this specimen. Final QC should all
+  # go into a flat folder to make it easier to check with eog, etc.
+  SPECIMEN_QCDIR=$ROOT/work/$id/qc
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -132,6 +144,8 @@ function set_specimen_density_vars()
 
   # Splat for the current density in vis space
   SPECIMEN_DENSITY_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.nii.gz
+  SPECIMEN_MASK_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_mask_${stain}_${model}.nii.gz
+  SPECIMEN_IHC_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_rgb_${stain}.nii.gz
 
   # The workspace with that
   SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.itksnap
@@ -345,6 +359,12 @@ function set_block_stain_vars()
   IHC_RGB_SPLAT_IMG=${IHC_RGB_SPLAT_BASENAME}.nii.gz
   IHC_RGB_SPLAT_IMG_TOHIRES=${IHC_RGB_SPLAT_BASENAME}_tohires.nii.gz
 
+  # Splatted mask image for this stain
+  IHC_MASK_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_mask
+  IHC_MASK_SPLAT_MANIFEST=${IHC_MASK_SPLAT_BASENAME}_manifest.txt
+  IHC_MASK_SPLAT_IMG=${IHC_MASK_SPLAT_BASENAME}.nii.gz
+  IHC_MASK_SPLAT_IMG_TOHIRES=${IHC_MASK_SPLAT_BASENAME}_tohires.nii.gz
+
   # Splatted registration validation curves
   IHC_REGEVAL_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_regeval
   IHC_REGEVAL_SPLAT_MANIFEST=${IHC_REGEVAL_SPLAT_BASENAME}_manifest.txt
@@ -402,17 +422,16 @@ function set_histo_common_slice_vars()
   # The location of the deepcluster 20-feature image
   SLIDE_DEEPCLUSTER=$SLIDE_LOCAL_PREPROC_DIR/${svs}_deepcluster.nii.gz
 
-  # The location of the RGB thumbnail
+  # The location of the RGB thumbnail, RGB nifti, and metadata JSON
   SLIDE_THUMBNAIL=$SLIDE_LOCAL_PREPROC_DIR/${svs}_thumbnail.tiff
+  SLIDE_RGB=$SLIDE_LOCAL_PREPROC_DIR/${svs}_rgb_40um.nii.gz
+  SLIDE_METADATA=$SLIDE_LOCAL_PREPROC_DIR/${svs}_metadata.json
 
   # The location of the resolution descriptor
   SLIDE_RAW_RESOLUTION_FILE=$SLIDE_LOCAL_PREPROC_DIR/${svs}_resolution.txt
 
   # Work directory for slide-derived stuff
   SLIDE_WORK_DIR=$ROOT/work/$id/histo_proc/$svs
-
-  # Nifti RGB image with 40 micron resolution
-  SLIDE_RGB=SLIDE_LOCAL_PREPROC_DIR/${svs}_rgb_40um.nii.gz
 
   # MRI-like derived from deepcluster (features to mri fitting)
   SLIDE_DEEPCLUSTER_MRILIKE_ROUGH=$SLIDE_WORK_DIR/${svs}_dc_mrilike_rough.nii.gz
@@ -474,8 +493,12 @@ function set_ihc_slice_vars()
 
   # Mask in NISSL space used for chunking registration
   SLIDE_IHC_NISSL_CHUNKING_MASK=${SLICE_IHC_TO_NISSL_BASE}_nissl_chunk_mask.nii.gz
+  SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY=${SLICE_IHC_TO_NISSL_BASE}_nissl_chunk_mask_binary.nii.gz
   SLIDE_IHC_TO_NISSL_CHUNKING_WARP=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_chunking_warp.nii.gz
   SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_reslice_rgb_chunking.nii.gz
+
+  # QC Image
+  SLIDE_IHC_TO_NISSL_QC=${SLICE_IHC_TO_NISSL_BASE}_qc.png
 
   # Resliced evaluation curves
   SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_GLOBAL=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_reslice_regeval_global.nii.gz
@@ -1125,17 +1148,9 @@ function preproc_histology()
     mkdir -p $SLIDE_WORK_DIR
 
     # Make sure the preprocessing data for this slice exists, if not issue a warning
-    if [[ ! -f $SLIDE_TEARFIX || ! -f $SLIDE_THUMBNAIL ]]; then
+    if [[ ! -f $SLIDE_RGB || ! -f $SLIDE_THUMBNAIL ]]; then
       echo "WARNING: missing images for $svs"
       continue
-    fi
-
-    # Generate the RGB file from the thumbnail
-    # TODO: disable check for production mode
-    if [[ ! -f $SLIDE_RGB ]]; then
-      c2d $SLIDE_TEARFIX -popas R -mcs $SLIDE_THUMBNAIL \
-        -foreach -insert R 1 -mbb -insert R 1 -reslice-identity -endfor \
-        -type uchar -omc $SLIDE_RGB
     fi
 
     # Generate a mask from the RGB (only for NISSL slices)
@@ -1245,7 +1260,7 @@ function fit_deepcluster_to_mri()
 
     # Align MRI to this resolution
     greedy -d 2 -rf $SLIDE_MASK_TO_DEEPCLUSTER \
-      -rm $HISTO_RECON_DIR/vol/slides/alt/mri/vol_slide_mri_${svs}.nii.gz \
+      -rm $HISTO_RECON_DIR/vol/slides/vol_slide_${svs}.nii.gz \
           $SLIDE_MRI_TO_DEEPCLUSTER \
       -r $HISTO_RECON_DIR/vol/$iter/affine_refvol_mov_${svs}_$iter.mat,-1
 
@@ -1393,27 +1408,35 @@ function recon_histology()
     # Jan 2020: the zeps=4 value seems to work better for the NCC metric, the
     # previously used value of 0.5 ended up having lots of slices skipped. But
     # need to doublecheck that this does not hurt other registrations
-    stack_greedy -N recon -z 1.6 4 0.1 \
+    stack_greedy recon -z 1.6 4 0.1 \
       -m NCC 8x8 -n 100x40x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
-    stack_greedy -N volmatch -i $BFVIS_MRILIKE \
-      -m NMI -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
+    stack_greedy volmatch -i $HIRES_MRI_TO_BFVIS_WARPED \
+      -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
 
     # Add the MRI volume, which will serve as target for subsequent registrations
-    stack_greedy -N voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
+    ### stack_greedy -N voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
 
     # Run affine registration to MRI
-    stack_greedy -N voliter -R 1 10 -na 10 -nd 10 -w 0.5 -wdp \
-      -m NCC 8x8 -n 100x40x10 -i mri \
+    stack_greedy voliter -R 1 5 -na 10 -nd 10 -w 0.5 -wdp \
+      -m NCC 8x8 -n 100x40x10 \
+      $HISTO_RECON_DIR
+
+    # Rematch histology to MRI based on affine result
+    fit_deepcluster_to_mri $id $block iter05
+
+    # Run affine registration to MRI
+    stack_greedy voliter -R 6 10 -na 10 -nd 10 -w 0.5 -wdp \
+      -m NCC 8x8 -n 100x40x10 \
       $HISTO_RECON_DIR
 
     # Rematch histology to MRI based on affine result
     fit_deepcluster_to_mri $id $block iter10
 
     # We are using the result of iteration 20 to start the MRI registration
-    stack_greedy -N voliter -R 11 20 -na 10 -nd 10 -w 0.5 -wdp \
-      -m NCC 8x8 -n 80x80 -s 3.0mm 0.25mm -mm \
-      -M $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST -i mri \
+    stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 2.0 -wdp \
+      -m NCC 8x8 -n 40x80x80 -s 3.0mm 0.25mm -mm \
+      -M $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST \
       $HISTO_RECON_DIR
 
   fi
@@ -1449,7 +1472,9 @@ function recon_histology()
     stack_greedy splat -o $OUT -i $(echo $STAGE | sed -e "s/-/ /g") \
       -z $nissl_z0 $nissl_zstep $nissl_z1 -xy 0.05 \
       -S exact -ztol 0.2 -si 3.0 \
-      -H -M $HISTO_NISSL_RGB_SPLAT_MANIFEST -rb 255.0 $HISTO_RECON_DIR
+      -H -M $HISTO_NISSL_RGB_SPLAT_MANIFEST -rb 255.0 \
+      -hm 16 -hm-invert \
+      $HISTO_RECON_DIR
 
       ### -si 3.0 -H -M $HISTO_NISSL_MRILIKE_SPLAT_MANIFEST -rb 0.0 $HISTO_RECON_DIR
 
@@ -1502,7 +1527,6 @@ function recon_histology()
     fi
 
   fi
-
 
   # Create a blockface reference image that has the same dimensions as the
   # splatted images. This will be used to extract edges
@@ -1888,8 +1912,8 @@ function kube()
 function splat_block()
 {
   # What specimen and block are we doing this for?
-  local id block manifest stage background args
-  read -r id block manifest stage result background args <<< "$@"
+  local id block manifest stage background ztol sigma heq args
+  read -r id block manifest stage result ztol sigma background heq args <<< "$@"
 
   # Get the z-range for splatting from the manifest file
   local MAIN_MANIFEST=$HISTO_RECON_DIR/config/manifest.txt
@@ -1904,11 +1928,17 @@ function splat_block()
     background="0"
   fi
 
+  # Histogram equalization
+  local heq_cmd=""
+  if [[ $heq -eq 1 ]]; then
+    local heq_cmd="-hm 16 -hm-invert"
+  fi
+
   # Do the splatting if manifest exists
   if [[ -f $manifest ]]; then
     stack_greedy splat -o $result -i $(echo $stage | sed -e "s/-/ /g") \
-      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol 0.2 -si 3.0 \
-      -H -M $manifest -rb $background $HISTO_RECON_DIR
+      -z $nissl_z0 $nissl_zstep $nissl_z1 -S exact -ztol $ztol -si $sigma \
+      -H -M $manifest -rb $background $heq_cmd $HISTO_RECON_DIR
   fi
 }
 
@@ -1974,8 +2004,10 @@ function find_nissl_slide()
 # Perform IHC to NISSL reconstruction for one stain
 function match_ihc_to_nissl()
 {
+  local id block stain skip_reg args
+
   # What specimen and block are we doing this for?
-  read -r id block stain args <<< "$@"
+  read -r id block stain skip_reg args <<< "$@"
 
   # Set density variables
   set_block_stain_vars $id $block $stain
@@ -2013,13 +2045,18 @@ function match_ihc_to_nissl()
 
     # Set the slide variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice
-    echo $SLIDE_RGB $SLIDE_LONG_NAME
 
     # Create the registration directory for this
     mkdir -p $SLIDE_IHC_TO_NISSL_REGDIR
 
-    # TODO: disable this check
-    if [[ ! -f SLIDE_IHC_TO_NISSL_CHUNKING_WARP ]]; then
+    # Number of chunks
+    local N_CHUNKS=8
+
+    if [[ $skip_reg -eq 1 ]]; then
+
+      echo "Skipping registration"
+
+    else
 
       # Take negative of the slides for better registration
       local NISSL_NEG=$TMPDIR/${NISSL_SLIDE_LONG_NAME}_neg.nii.gz
@@ -2030,27 +2067,17 @@ function match_ihc_to_nissl()
 
       # Perform the whole-slide registration (rigid and deformable)
       greedy -d 2 -a -dof 6 -i $NISSL_NEG $IHC_NEG -o $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
-        -m NCC 16x16 -n 100x40x10x0 -search 4000 any 5 -ia-image-centers -gm $NISSL_SLIDE_MASK
-
-  <<'SKIPDEF'
-      greedy -d 2 -i $NISSL_NEG $IHC_NEG -it $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
-        -o $SLIDE_IHC_TO_NISSL_GLOBAL_WARP -sv -sv-incompr -m NCC 16x16 -n 400x200x160x60 \
-        -s 2mm 0.1mm -gm $NISSL_SLIDE_MASK 
-
-      # Reslice using global transformation
-      local IHC_NEG_RESLICE_GLOBAL=$TMPDIR/${SLIDE_LONG_NAME}_reslice_neg_global.nii.gz
-      greedy -d 2 -rf $NISSL_NEG \
-        -rm $IHC_NEG $IHC_NEG_RESLICE_GLOBAL \
-        -rm $SLIDE_RGB $SLIDE_IHC_TO_NISSL_RESLICE_GLOBAL \
-        -r $SLIDE_IHC_TO_NISSL_GLOBAL_WARP $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
-SKIPDEF
+        -m NCC 16x16 -n 100x40x10x0 -search 10000 flip 5 -ia-image-centers -gm $NISSL_SLIDE_MASK
 
       # Chunk up the registration mask
       local NISSL_MASK_CC=$TMPDIR/nissl_mask_cc.nii.gz
       c2d $NISSL_SLIDE_MASK -comp -thresh 1 1 1 0 -o $NISSL_MASK_CC
 
-      local N_CHUNKS=8
       image_graph_cut -u 2 -n 20 $NISSL_MASK_CC $SLIDE_IHC_NISSL_CHUNKING_MASK $N_CHUNKS
+
+      # Create a binary version (chunking loses connected component, hence)
+      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 \
+        -type uchar -o $SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY
 
       # Extract mask from images
       for ((i=1;i<=$N_CHUNKS;i++)); do
@@ -2089,24 +2116,55 @@ SKIPDEF
         -foreach-comp 2 -mean -scale $N_CHUNKS -endfor \
         -omc $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
 
+      # Reslice using the chunking warp
+      chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_RGB $SLIDE_RGB \
+        $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING 255
+
+      # Reslice using the chunking warp
+      local TMP_RESLICE=$TMPDIR/reslice_temp.nii.gz
+      greedy -d 2 -rf $NISSL_SLIDE_RGB -rm $SLIDE_RGB $TMP_RESLICE \
+        -r $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
+
+      c2d -mcs $TMP_RESLICE \
+        $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 -popas M \
+        -foreach -push M -times -push M -thresh 0 0 255 0 -add -endfor \
+        -omc $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING
+
+      # Generate some PNG images for display
+      c2d -mcs $NISSL_SLIDE_RGB -type uchar -omc $TMPDIR/nissl.png
+      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -stretch 0 $N_CHUNKS 0 255 \
+        -type uchar -omc $TMPDIR/mask.png
+      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -popas R -mcs $SLIDE_RGB \
+        -foreach -insert R 1 -reslice-matrix $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID -endfor \
+        -type uchar -omc $TMPDIR/ihc_global.png
+      c2d -mcs $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING \
+        -type uchar -omc $TMPDIR/ihc_chunking.png
+
+      for MYPNG in nissl.png mask.png ihc_global.png ihc_chunking.png; do
+        $ROOT/scripts/ashs_grid.sh -o 0.25 -s 25 -c "white" $TMPDIR/$MYPNG $TMPDIR/$MYPNG
+        $ROOT/scripts/ashs_grid.sh -o 0.75 -s 125 -c "white" $TMPDIR/$MYPNG $TMPDIR/$MYPNG
+      done
+
+      montage -tile 2x2 -geometry +5+5 -mode Concatenate \
+        $TMPDIR/nissl.png \
+        $TMPDIR/mask.png \
+        $TMPDIR/ihc_global.png \
+        $TMPDIR/ihc_chunking.png \
+        $SLIDE_IHC_TO_NISSL_QC
+
     fi
-
-    # Reslice using the chunking warp
-    chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_RGB $SLIDE_RGB \
-      $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING 255
-
-    # Reslice using the chunking warp
-    local TMP_RESLICE=$TMPDIR/reslice_temp.nii.gz
-    greedy -d 2 -rf $NISSL_SLIDE_RGB -rm $SLIDE_RGB $TMP_RESLICE \
-      -r $SLIDE_IHC_TO_NISSL_CHUNKING_WARP 
-
-    c2d -mcs $TMP_RESLICE \
-      $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 -popas M \
-      -foreach -push M -times -push M -thresh 0 0 255 0 -add -endfor \
-      -omc $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING
 
     # Generate the manifest for processed slides
     echo $MATCHED_NISSL_SVS $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING >> $IHC_RGB_SPLAT_MANIFEST
+
+
+    # TODO: delete this, done above
+    c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 \
+      -type uchar -o $SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY
+
+    # We also need a mask splatting manifest because we need to know where did the
+    # density maps come from
+    echo $MATCHED_NISSL_SVS $SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY >> $IHC_MASK_SPLAT_MANIFEST
 
     # Does the registration validation exist? If so, we need to also reslice it to
     # the NISSL space
@@ -2120,14 +2178,23 @@ SKIPDEF
       # Add line to the splat file
       echo $svs $SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_CHUNKING >> $IHC_REGEVAL_SPLAT_MANIFEST
     fi
-    
+
   done < $HISTO_MATCH_MANIFEST
 
   # Perform splatting
-  splat_block $id $block $IHC_RGB_SPLAT_MANIFEST voliter-20 $IHC_RGB_SPLAT_IMG 255
+  splat_block $id $block $IHC_RGB_SPLAT_MANIFEST \
+    voliter-20 $IHC_RGB_SPLAT_IMG \
+    1.2 3.0 255 1
+
+  # Splat the mask
+  splat_block $id $block $IHC_MASK_SPLAT_MANIFEST \
+    voliter-20 $IHC_MASK_SPLAT_IMG \
+    1.2 3.0 0 0
 
   # Splat the regeval
-  splat_block $id $block $IHC_REGEVAL_SPLAT_MANIFEST voliter-20 $IHC_REGEVAL_SPLAT_IMG 0
+  splat_block $id $block $IHC_REGEVAL_SPLAT_MANIFEST \
+    voliter-20 $IHC_REGEVAL_SPLAT_IMG \
+    0.2 3.0 0 0
 }
 
 # Generate the tau splat images
@@ -2186,7 +2253,9 @@ function splat_density()
   done < $HISTO_MATCH_MANIFEST
 
   # Perform splatting (TODO: previous code has -si 10, do we need that?)
-  splat_block $id $block $IHC_DENSITY_SPLAT_MANIFEST voliter-20 $IHC_DENSITY_SPLAT_IMG 0
+  splat_block $id $block $IHC_DENSITY_SPLAT_MANIFEST \
+    voliter-20 $IHC_DENSITY_SPLAT_IMG \
+    1.2 3.0 0 0
 
   # Generate a workspace for examining results
   itksnap-wt \
@@ -2203,7 +2272,7 @@ function splat_density()
 function match_ihc_to_nissl_all()
 {
   # Read required and optional parameters
-  read -r stain REGEXP args <<< "$@"
+  read -r stain REGEXP skip_reg args <<< "$@"
 
   # Process the individual blocks
   cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
@@ -2213,7 +2282,7 @@ function match_ihc_to_nissl_all()
 
     # Submit the jobs
     qsub $QSUBOPT -N "match_nissl_${stain?}_${id}_${block}" \
-      $0 match_ihc_to_nissl $id $block $stain 
+      $0 match_ihc_to_nissl $id $block $stain $skip_reg
 
   done
 
@@ -2269,33 +2338,78 @@ function merge_splat()
   local BLOCKS=$(cat $MDIR/blockface_param.txt | awk -v s=$id '$1==s {print $2}')
 
   # Register everything into the "nice" MRI space
-  local SPLATMAPS=""
+  local OVERLAP_MASK_SPLATMAPS=""
+  local DENSITY_SPLATMAPS=""
+  local MASK_SPLATMAPS=""
+  local IHC_SPLATMAPS=""
+  local NISSL_SPLATMAPS=""
+
   for block in $BLOCKS; do
     set_block_vars $id $block
     set_block_density_vars $id $block $stain $model
 
     if [[ -f $IHC_DENSITY_SPLAT_IMG ]]; then
 
-      local TMPMAP=$TMPDIR/$splat_${id}_${block}_${stain}_${model}.nii.gz
+      local OVERLAP_MASK=$TMPDIR/overlap_mask_${block}.nii.gz
+      c3d $IHC_MASK_SPLAT_IMG -scale 0 -shift 1 -o $OVERLAP_MASK
+
+      local OVERLAP_MASK_TMPMAP=$TMPDIR/splat_overlap_mask_${id}_${block}_${stain}_${model}.nii.gz
+      local DENSITY_TMPMAP=$TMPDIR/splat_density_${id}_${block}_${stain}_${model}.nii.gz
+      local MASK_TMPMAP=$TMPDIR/splat_mask_${id}_${block}_${stain}_${model}.nii.gz
+      local IHC_TMPMAP=$TMPDIR/splat_ihc_${id}_${block}_${stain}_${model}.nii.gz
+      local NISSL_TMPMAP=$TMPDIR/splat_nissl_${id}_${block}_${stain}_${model}.nii.gz
+      local NISSL_BLOCK=$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)
+
       greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
-        -rm $IHC_DENSITY_SPLAT_IMG $TMPMAP \
+        -rm $OVERLAP_MASK $OVERLAP_MASK_TMPMAP \
+        -rm $IHC_DENSITY_SPLAT_IMG $DENSITY_TMPMAP \
+        -rm $IHC_MASK_SPLAT_IMG $MASK_TMPMAP \
+        -rm $IHC_RGB_SPLAT_IMG $IHC_TMPMAP \
+        -rm $NISSL_BLOCK $NISSL_TMPMAP \
         -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $BFVIS_TO_HIRES_FULL
 
-      SPLATMAPS="$SPLATMAPS $TMPMAP"
+      OVERLAP_MASK_SPLATMAPS="$OVERLAP_MASK_SPLATMAPS $OVERLAP_MASK_TMPMAP"
+      DENSITY_SPLATMAPS="$DENSITY_SPLATMAPS $DENSITY_TMPMAP"
+      MASK_SPLATMAPS="$MASK_SPLATMAPS $MASK_TMPMAP"
+      IHC_SPLATMAPS="$IHC_SPLATMAPS $IHC_TMPMAP"
+      NISSL_SPLATMAPS="$NISSL_SPLATMAPS $NISSL_TMPMAP"
     fi
   done
 
   # Combine the splat maps
   mkdir -p $SPECIMEN_SPLAT_DIR
-  if [[ $SPLATMAPS != "" ]]; then
-    c3d $SPLATMAPS -accum -add -endaccum -o $SPECIMEN_DENSITY_SPLAT_VIS
+  local N=$(echo $BLOCKS | wc -w)
+  if [[ $N -gt 0 ]]; then
+
+    # Create an overlap mask to normalize by
+    local WEIGHTMAP=$TMPDIR/weight_map.nii.gz
+    c3d $OVERLAP_MASK_SPLATMAPS \
+      -accum -add -endaccum -clip 1 inf -reciprocal -scale $N \
+      -o $WEIGHTMAP
+
+    # Combine all the images and scale by the weightmap to normalize for overlap
+    c3d $MASK_SPLATMAPS -mean $WEIGHTMAP -times -o $SPECIMEN_MASK_SPLAT_VIS
+    c3d $DENSITY_SPLATMAPS -mean $WEIGHTMAP -times -o $SPECIMEN_DENSITY_SPLAT_VIS
+    c3d $WEIGHTMAP -popas W -mcs $IHC_SPLATMAPS \
+      -foreach-comp 3 -mean -push W -times -endfor \
+      -type uchar -omc $SPECIMEN_IHC_SPLAT_VIS
+    c3d $WEIGHTMAP -popas W -mcs $NISSL_SPLATMAPS \
+      -foreach-comp 3 -mean -push W -times -endfor \
+      -omc $SPECIMEN_NISSL_SPLAT_VIS
   fi
 
   # Create a merged workspace
   itksnap-wt \
     -lsm "$HIRES_MRI_VIS" -psn "9.4T MRI" \
-    -laa "$SPECIMEN_DENSITY_SPLAT_VIS" -psn "${stain} ${model}" \
-    -props-set-colormap "hot" \
+    -laa "$SPECIMEN_NISSL_SPLAT_VIS" -psn "NISSL recon" -props-set-mcd RGB \
+    -props-set-contrast LINEAR 0 255 \
+    -laa "$SPECIMEN_IHC_SPLAT_VIS" -psn "${stain} recon" -props-set-mcd RGB \
+    -props-set-contrast LINEAR 0 255 \
+    -laa "$SPECIMEN_DENSITY_SPLAT_VIS" \
+    -prl "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt " \
+    -psn "${stain} ${model}" \
+    -prs LayerMetaData.Sticky 1 \
+    -laa "$SPECIMEN_MASK_SPLAT_VIS" -psn "Recon mask" \
     -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
 }
 
@@ -2442,6 +2556,107 @@ function rsync_histo_annot_all()
   # Wait for completion
   qsub $QSUBOPT -b y -sync y -hold_jid "rsync_histo_annot_*" /bin/sleep 0
 }
+
+# Generate some final QC for a block
+function block_final_qc()
+{
+  # What specimen and block are we doing this for?
+  local id block args svs
+  read -r id block args <<< "$@"
+  set_block_vars $id $block
+
+  # Create the directory
+  mkdir -p $SPECIMEN_QCDIR
+
+  # For now only target one stage
+  local STAGE="voliter-20"
+
+  # We just want to capture the registration of the different modalities
+  # at representative slices. Use this json for parameters
+  local JPAR=$TMPDIR/qc_param.json
+  echo '{"s":[["z","20%"],["z","50%"],["z","80%"],["x","50%"]]}' > $JPAR
+
+  # Iterate over slices
+  local NSLICES=$(jq '.s | length' $JPAR)
+  for ((i=0; i<NSLICES; i++)); do
+
+    local AXIS=$(jq -r ".s[$i][0]" $JPAR)
+    local POS=$(jq -r ".s[$i][1]" $JPAR)
+    local CODE=$(echo "${AXIS}_${POS}" | sed -e "s/%//")
+
+    local ref_space=$TMPDIR/${CODE}_refspace.nii.gz
+    local mri_slide_png=$TMPDIR/${CODE}_mri_img.png
+    local hist_slide_png=$TMPDIR/${CODE}_hist_img.png
+    local mrilike_slide_png=$TMPDIR/${CODE}_mrilike_img.png
+    local bf_slide_png=$TMPDIR/${CODE}_bf.png
+    local all_png=("$mri_slide_png" "$hist_slide_png" \
+                   "$mrilike_slide_png" "$bf_slide_png")
+    local qc_png=$SPECIMEN_QCDIR/historeg_qc_${id}_${block}_${CODE}.png
+
+    # Extract the slice of interest from the RGB splat volume
+    c3d -mcs $(printf $HISTO_NISSL_RGB_SPLAT_PATTERN $STAGE) \
+      -foreach -slice $AXIS $POS -clip 0 255 \
+      -int 0 -resample-mm 0.05x0.05x0.05mm -endfor \
+      -type uchar -omc $hist_slide_png \
+      -scale 0 -o $ref_space
+
+    c3d -mcs $(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE) \
+      -slice $AXIS $POS -stretch 0 98% 0 255 -clip 0 255  \
+      -int 0 -resample-mm 0.05x0.05x0.05mm \
+      -type uchar -o $mrilike_slide_png
+
+    # Extract matching slide from MRI
+    c3d $ref_space $HIRES_MRI_TO_BFVIS_WARPED \
+      -reslice-identity -stretch 0 98% 0 255 -clip 0 255 \
+      -type uchar -o $mri_slide_png
+
+    # Extract matching slide from blockface
+    c3d $ref_space -popas R -mcs $BFVIS_RGB \
+      -foreach -insert R 1 -reslice-identity -endfor \
+      -type uchar -omc $bf_slide_png
+
+    # Add grids
+    for MYPNG in ${all_png[*]}; do
+
+      # Add gridlines
+      local COLOR="black"
+      if [[ $MYPNG == $mri_slide_png || $MYPNG == $mrilike_slide_png ]]; then
+        COLOR="white"
+      fi
+
+      $ROOT/scripts/ashs_grid.sh -o 0.25 -s 25 -c $COLOR $MYPNG $MYPNG
+      $ROOT/scripts/ashs_grid.sh -o 0.75 -s 125 -c $COLOR $MYPNG $MYPNG
+
+    done
+
+    # Montage the images into one QC file
+    montage -tile 2x2 -geometry +5+5 -mode Concatenate \
+      ${all_png[*]} $qc_png
+
+  done
+
+}
+
+
+function block_final_qc_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+
+    # Submit the jobs
+    qsub $QSUBOPT -N "block_final_qc_${id}_${block}" \
+      $0 block_final_qc $id $block
+
+  done
+
+  # Wait for completion
+  qsub $QSUBOPT -b y -sync y -hold_jid "block_final_qc_*" /bin/sleep 0
+
+}
+
 
 function main()
 {
