@@ -68,7 +68,7 @@ def process_svs(p):
 
         # Get the thumbnail from the image at this resolution
         idata = np.asarray(slide.get_thumbnail((wx, wy)))
-        (wwx, wwy) = (idata.shape[0], idata.shape[1])
+        (wwx, wwy) = (idata.shape[1], idata.shape[0])
 
         # Recompute the spacing using the actual size of image
         ssx = (sx * slide.dimensions[0]) / wwx
