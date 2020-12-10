@@ -45,11 +45,20 @@ function set_template_vars()
   # Don't trace inside of set functions
   local tracestate=$(shopt -po xtrace); set +x
 
+  # FLAIR template
+  TEMPLATE_IV_FLAIR_MTL=$ROOT/manual/common/template/template_invivo_flair_mtl2x.nii.gz
+  TEMPLATE_IV_FLAIR_WHOLE=$ROOT/manual/common/template/template_invivo_flair_whole.nii.gz
+
   # Target image for manual affine registration
   TEMPLATE_MANUAL_TARGET="HNL-28-17"
   TEMPLATE_DIR=$ROOT/work/template
   TEMPLATE_IMG=$TEMPLATE_DIR/template.nii.gz
   TEMPLATE_MASK=$TEMPLATE_DIR/template_mask.nii.gz
+  TEMPLATE_SOFT_MASK=$TEMPLATE_DIR/template_soft_mask.nii.gz
+
+  # Warp between ev vivo and in vivo template (temporary use)
+  TEMPLATE_EV_TO_IV_WARP=$TEMPLATE_DIR/template_ev_to_iv_warp.nii.gz
+  TEMPLATE_EV_TO_IV_AFFINE=$TEMPLATE_DIR/template_ev_to_iv_affine.mat
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -74,9 +83,13 @@ function set_template_density_vars()
 
   # File specifying cutoff levels
   DENSITY_CUTOFF_MANIFEST=$MDIR/density_cutoffs_${stain}_${model}.txt
+  DENSITY_SUBJECT_MANIFEST=$MDIR/density_subjects_${stain}_${model}.txt
 
   # Pattern for cutoff-specific maps
   TEMPLATE_DENSITY_CUTOFF_AVGMAP_PATTERN=$TEMPLATE_DIR/template_avg_density_cutoff_%s_${stain}_${model}.nii.gz
+
+  # Workspace for the template
+  TEMPLATE_DENSITY_WORKSPACE=$TEMPLATE_DIR/template_density_${stain}_${model}_workspace.itksnap
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -175,6 +188,16 @@ function set_specimen_vars()
   TEMPLATE_MASK_RESLICED=$TEMPLATE_DIR/${id}_to_template_mask_resliced.nii.gz
   TEMPLATE_HIRES_WARP=$TEMPLATE_DIR/${id}_to_template_warp.nii.gz
 
+  TEMPLATE_IV_TO_HIRES_VIS_MANUAL_AFFINE=$ROOT/manual/$id/template/${id}_to_invivo_template_affine_inv.mat
+  TEMPLATE_IV_TO_HIRES_VIS_AFFINE=$TEMPLATE_DIR/${id}_to_invivo_template_affine_inv.mat
+  TEMPLATE_IV_TO_HIRES_VIS_WARPROOT=$TEMPLATE_DIR/${id}_to_invivo_template_warproot_inv.nii.gz
+  TEMPLATE_IV_HIRES_WARP=$TEMPLATE_DIR/${id}_to_invivo_template_warp.nii.gz
+  TEMPLATE_IV_HIRES_RESLICED=$TEMPLATE_DIR/${id}_to_invivo_template_resliced.nii.gz
+  TEMPLATE_IV_MASK_RESLICED=$TEMPLATE_DIR/${id}_to_invivo_template_mask_resliced.nii.gz
+
+  TEMPLATE_HIRES_VIS_FINAL_WARP=$MRI_WORK_DIR/${id}_hires_vis_to_template_warp.nii.gz
+  TEMPLATE_HIRES_VIS_FINAL_JACOBIAN=$MRI_WORK_DIR/${id}_hires_vis_to_template_jacobian.nii.gz
+
   # Location for the final QC files for this specimen. Final QC should all
   # go into a flat folder to make it easier to check with eog, etc.
   SPECIMEN_QCDIR=$ROOT/work/$id/qc
@@ -197,12 +220,20 @@ function set_specimen_density_vars()
   SPECIMEN_MASK_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_mask_${stain}_${model}.nii.gz
   SPECIMEN_IHC_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_rgb_${stain}.nii.gz
 
+  # Splat for the current density in vis space with smoothing (no gaps)
+  SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_density_sm_${stain}_${model}.nii.gz
+  SPECIMEN_MASK_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_mask_sm_${stain}_${model}.nii.gz
+  SPECIMEN_IHC_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_rgb_sm_${stain}.nii.gz
+
   # The workspace with that
   SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.itksnap
 
   # Maps in template space
   TEMPLATE_DENSITY_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_template_density_${stain}_${model}.nii.gz
   TEMPLATE_DENSITY_MASK_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_template_density_mask_${stain}_${model}.nii.gz
+
+  # The workspace with that
+  TEMPLATE_DENSITY_SPLAT_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}_tempspace.itksnap
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -371,7 +402,7 @@ function set_block_vars()
   HISTO_NISSL_BASED_MRI_SEGMENTATION_WORKSPACE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_based_mri_seg.itksnap
 
   # Files exported to the segmentation server. These should be stored in a convenient
-  # to copy location 
+  # to copy location
   HISTO_AFFINE_X16_DIR=$ROOT/export/affine_x16/${id}/${block}
 
   # Where histology-derived density maps are stored
@@ -523,7 +554,7 @@ function set_histo_common_slice_vars()
 }
 
 
-# Set variables for a histology slice. 
+# Set variables for a histology slice.
 function set_ihc_slice_vars()
 {
   # Don't trace inside of set functions
@@ -541,7 +572,7 @@ function set_ihc_slice_vars()
 
   # Random forest file for this
   SLIDE_MASK_GLOBAL_RFTRAIN=$ROOT/manual/common/slide_mask_rf_${stain}.dat
-  
+
   # Long name of the slide
   SLIDE_LONG_NAME=$(printf "%s_%s_%02d_%02d_%s" $id $block $section $slice $stain)
 
@@ -614,7 +645,7 @@ function preview_blockface()
 
   # Read the rest of the info from the parameter file
   local ROW=$(cat $MDIR/blockface_param.txt | grep "$id\W*$block")
-    
+
   # Read all the arguments
   read -r id block spacing offset size resample first last swapdim args <<< "$ROW"
 
@@ -638,7 +669,7 @@ function preview_blockface()
 
     K=$(echo "($POS * $N)/1" | bc)
     fn=$(cat $BF_SLIDES | head -n $K | tail -n 1)
-    
+
     # Resampling commands
     if [[ $resample -eq 1 ]]; then
       RESCOM=""
@@ -664,7 +695,7 @@ function preview_blockface()
 
 
 # This function reconstructs the blockface images
-# TODO: this does not correct for shifts between the blockface images. It would be 
+# TODO: this does not correct for shifts between the blockface images. It would be
 # better to perform some kind of groupwise alignment of the blockface images first
 # but this should be handled by a separate C++ program, not bash
 function recon_blockface()
@@ -723,7 +754,7 @@ function recon_blockface()
 
   local N=$(cat $BF_SLIDES | wc -l)
   for ((i=1; i<$N;i++)); do
-    
+
     fn_fix=$(cat $BF_SLIDES | head -n $i | tail -n 1)
     fn_mov=$(cat $BF_SLIDES | head -n $((i+1)) | tail -n 1)
 
@@ -758,16 +789,16 @@ function recon_blockface()
         -rm $RGBDIR/rgb02_${fn_mov/.jpg/.png} $RGBDIR/reg_rgb02_${fn_mov/.jpg/.png} \
         -r $matchain
     else
-      cp -av $RGBDIR/rgb00_${fn_mov/.jpg/.png} $RGBDIR/reg_rgb00_${fn_mov/.jpg/.png} 
+      cp -av $RGBDIR/rgb00_${fn_mov/.jpg/.png} $RGBDIR/reg_rgb00_${fn_mov/.jpg/.png}
       cp -av $RGBDIR/rgb01_${fn_mov/.jpg/.png} $RGBDIR/reg_rgb01_${fn_mov/.jpg/.png}
-      cp -av $RGBDIR/rgb02_${fn_mov/.jpg/.png} $RGBDIR/reg_rgb02_${fn_mov/.jpg/.png} 
+      cp -av $RGBDIR/rgb02_${fn_mov/.jpg/.png} $RGBDIR/reg_rgb02_${fn_mov/.jpg/.png}
     fi
 
     # Copy the first slice verbatim
     if [[ $i -eq 1 ]]; then
-      cp -av $RGBDIR/rgb00_${fn_fix/.jpg/.png} $RGBDIR/reg_rgb00_${fn_fix/.jpg/.png} 
+      cp -av $RGBDIR/rgb00_${fn_fix/.jpg/.png} $RGBDIR/reg_rgb00_${fn_fix/.jpg/.png}
       cp -av $RGBDIR/rgb01_${fn_fix/.jpg/.png} $RGBDIR/reg_rgb01_${fn_fix/.jpg/.png}
-      cp -av $RGBDIR/rgb02_${fn_fix/.jpg/.png} $RGBDIR/reg_rgb02_${fn_fix/.jpg/.png} 
+      cp -av $RGBDIR/rgb02_${fn_fix/.jpg/.png} $RGBDIR/reg_rgb02_${fn_fix/.jpg/.png}
     fi
 
   done
@@ -825,8 +856,8 @@ function process_mri()
   c3d $MOLD_BINARY_NATIVE -orient $mold_orient -o $MOLD_BINARY
   c3d_affine_tool -sform $MOLD_BINARY -sform $MOLD_BINARY_NATIVE -inv -mult -inv \
     -o $MOLD_NATIVE_TO_STD_MAT
-    
-  c3d_affine_tool $MOLD_RIGID_MAT_NATIVE $MOLD_NATIVE_TO_STD_MAT -mult -o $MOLD_RIGID_MAT 
+
+  c3d_affine_tool $MOLD_RIGID_MAT_NATIVE $MOLD_NATIVE_TO_STD_MAT -mult -o $MOLD_RIGID_MAT
 
   # Crop the MRI to the region used to make the mold
   c3d $MOLD_CONTOUR $MOLD_MRI -reslice-identity -o $MOLD_MRI_CROP
@@ -852,11 +883,11 @@ function process_mri()
   greedy -d 3 -i $HIRES_MRI $MOLD_MRI_N4 -it $HIRES_TO_MOLD_AFFINE,-1 \
     -o $MOLD_TO_HIRES_WARP -oroot $MOLD_TO_HIRES_ROOT_WARP \
     -sv -s 3mm 0.2mm -m NCC 8x8x8 -n 100x100x100x40 -gm $HIRES_MRI_REGMASK \
-    -wp 0.0001 -exp 6 
+    -wp 0.0001 -exp 6
 
   # Apply the registration
   greedy -d 3 -rf $HIRES_MRI -rm $MOLD_MRI_N4 $RESLICE_MOLD_TO_HIRES \
-    -r $MOLD_TO_HIRES_ROOT_WARP,64 $HIRES_TO_MOLD_AFFINE,-1 
+    -r $MOLD_TO_HIRES_ROOT_WARP,64 $HIRES_TO_MOLD_AFFINE,-1
 
   # Generate the inverse warp
   greedy -d 3 -rf $HIRES_MRI \
@@ -881,7 +912,7 @@ function process_mri()
   # Add each of the blocks to it
   local BLOCKS=$(cat $MDIR/blockface_param.txt | awk -v s=${id} '$1==s {print $2}')
   for block in $BLOCKS; do
-    
+
     set_block_vars $id $block
 
     itksnap-wt \
@@ -1075,7 +1106,7 @@ function register_blockface()
     -r $HIRES_TO_BFVIS_WARP_FULL
 
   # If validation tracings exist in MRI space, map them to the blockface space
-  # for evaluation purposes. 
+  # for evaluation purposes.
   if [[ -f $HIRES_MRI_MANUAL_TRACE ]]; then
 
     # On slices that have segmentations, we want to fill the background of the
@@ -1159,7 +1190,7 @@ function rsync_histo_all()
 
   done
 }
-  
+
 function pull_histo_match_manifest()
 {
   # What specimen and block are we doing this for?
@@ -1401,8 +1432,8 @@ function recon_histology()
 
   # Slice thickness. If this ever becomes variable, read this from the blockface_param file
   THK="0.05"
-  
-  # For each slice in the manifest, determine its z coordinate. This is done by looking 
+
+  # For each slice in the manifest, determine its z coordinate. This is done by looking
   # up the slice in the list of all slices going into the blockface image
   rm -f $HISTO_RECON_MANIFEST
 
@@ -1451,9 +1482,9 @@ function recon_histology()
     fi
 
     # If not found, generate warning, do not add slice
-    # TODO: there are some missing blockface scans. We need a more robust way to generate 
+    # TODO: there are some missing blockface scans. We need a more robust way to generate
     # z coordinates and perform stacking
-    if [[ ! $ZPOS ]]; then 
+    if [[ ! $ZPOS ]]; then
       echo "WARNING: no matching blockface image for $svs"
       continue
     fi
@@ -2153,7 +2184,7 @@ function upload_histo_recon_results()
     fi
 
     # Multiply the two matrices. Since we don't have c2d_affine_tool, we have to
-    # do this by hand, which is uggly. 
+    # do this by hand, which is uggly.
     local FN_FULL_MATRIX=$TMPDIR/full.mat
     cat $AFF_TO_MRI $VP_FULL_AXIAL_ROT_FLIP | awk '\
       NR==1 { a11=$1; a12=$2; a13=$3 } \
@@ -2232,7 +2263,7 @@ function splat_block()
 
   # Get the z-range for splatting from the manifest file
   local MAIN_MANIFEST=$HISTO_RECON_DIR/config/manifest.txt
-  
+
   # Splat the NISSL slides if they are available
   local nissl_z0=$(cat $MAIN_MANIFEST | cut -d ' ' -f 2 | sort -n | head -n 1)
   local nissl_z1=$(cat $MAIN_MANIFEST | cut -d ' ' -f 2 | sort -n | tail -n 1)
@@ -2341,7 +2372,7 @@ function match_ihc_to_nissl()
 
     if [[ ! $MATCHED_NISSL_SVS ]]; then continue; fi
 
-    # Set the NISSL slide variables 
+    # Set the NISSL slide variables
     set_ihc_slice_vars $id $block $MATCHED_NISSL_SVS NISSL $section $MATCHED_NISSL_SLIDE
 
     # TODO: delete this!!!
@@ -2572,7 +2603,7 @@ function splat_density()
 
     # Set the variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
-    set_ihc_slice_density_vars $svs $stain $model 
+    set_ihc_slice_density_vars $svs $stain $model
 
     # Find the matching NISSL slide
     find_nissl_slide $section
@@ -2844,15 +2875,24 @@ function merge_splat()
       -omc $SPECIMEN_NISSL_SPLAT_VIS
   fi
 
+  # Apply masked smoothing to these maps (to make up for gaps)
+  c3d $SPECIMEN_MASK_SPLAT_VIS -as M -smooth-fast 2x0.2x0.2mm \
+    -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH -reciprocal -popas MSR \
+    $SPECIMEN_DENSITY_SPLAT_VIS -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times \
+    -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH \
+    -clear -mcs $SPECIMEN_IHC_SPLAT_VIS \
+    -foreach -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times -endfor \
+    -omc $SPECIMEN_IHC_SPLAT_VIS_SMOOTH
+
   # If the specimen has been warped to the template, apply this warp
-  if [[ -f $TEMPLATE_INIT_MATRIX && -f $TEMPLATE_HIRES_WARP ]]; then
+  if [[ -f $TEMPLATE_IV_TO_HIRES_VIS_AFFINE && -f $TEMPLATE_HIRES_WARP && -f $TEMPLATE_IV_HIRES_WARP ]]; then
 
     # Apply the alignment to the density map and mask
     greedy -d 3 \
       -rf $TEMPLATE_IMG \
       -rm $SPECIMEN_DENSITY_SPLAT_VIS $TEMPLATE_DENSITY_SPLAT \
       -rm $SPECIMEN_MASK_SPLAT_VIS $TEMPLATE_DENSITY_MASK_SPLAT \
-      -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_INIT_MATRIX
+      -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_IV_TO_HIRES_VIS_AFFINE,-1 $TEMPLATE_IV_HIRES_WARP
 
   fi
 
@@ -2869,6 +2909,16 @@ function merge_splat()
     -prs LayerMetaData.Sticky 1 \
     -laa "$SPECIMEN_MASK_SPLAT_VIS" -psn "Recon mask" \
     -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
+
+  # Do the same for the template space
+  itksnap-wt \
+    -lsm "$TEMPLATE_HIRES_RESLICED" -psn "9.4T MRI" \
+    -laa "$TEMPLATE_DENSITY_SPLAT" \
+    -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+    -psn "${stain} ${model}" \
+    -prs LayerMetaData.Sticky 1 \
+    -laa "$TEMPLATE_DENSITY_MASK_SPLAT" -psn "Recon mask" \
+    -o $TEMPLATE_DENSITY_SPLAT_WORKSPACE
 
   # Generate a figure for paper
   make_whole_specimen_density_figure $id $stain $model
@@ -2963,7 +3013,7 @@ function download_svg()
     if [[ ! -f $LOCAL_SVG ]]; then
       # Download the SVG
       local SVG_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/svg"
-      if ! curl -ksfo $LOCAL_SVG $SVG_CURL_OPTS $SVG_URL; then
+      if ! curl -ksfo $LOCAL_SVG --retry 4 $SVG_CURL_OPTS $SVG_URL; then
         echo "Unable to download $LOCAL_SVG"
         return
       fi
@@ -3175,40 +3225,59 @@ function template_initial_reslice()
 
   set_specimen_vars $id
 
-  # Align the specimen to the manual target
-  greedy -d 3 -rf $TARGET_HIRES_MRI_VIS \
-    -rm $HIRES_MRI_VIS $TEMPLATE_HIRES_RESLICED \
-    -rm $MOLD_MRI_MASK_VIS $TEMPLATE_MASK_RESLICED \
-    -r $TEMPLATE_INIT_MATRIX
+  # Create a low-resolution image and mask to match template resolution
+  c3d $HIRES_MRI_VIS -smooth-fast 0.6mm -resample-mm 0.5mm -o $TMPDIR/lores.nii.gz \
+    $MOLD_MRI_MASK_VIS -smooth-fast 0.6mm -reslice-identity \
+    -thresh 0.75 inf 1 0 -o $TMPDIR/lores_mask.nii.gz
 
-  # Handle the mask
-  if [[ $id == $TEMPLATE_MANUAL_TARGET ]]; then
-    cp -av $TEMPLATE_MASK_RESLICED $TEMPLATE_MASK
-  fi
+  # Perform affine registration based on manual initialization
+  greedy -d 3 -i $TMPDIR/lores.nii.gz $TEMPLATE_IV_FLAIR_WHOLE \
+    -m NCC 2x2x2 -n 100x40x0 -a -gm $TMPDIR/lores_mask.nii.gz \
+    -o $TEMPLATE_IV_TO_HIRES_VIS_AFFINE -ia $TEMPLATE_IV_TO_HIRES_VIS_MANUAL_AFFINE
+
+  # Perform deformable registration
+  greedy -d 3 -i $TMPDIR/lores.nii.gz $TEMPLATE_IV_FLAIR_MTL \
+    -m NCC 2x2x2 -n 100x100x40 -sv -s 3mm 1mm \
+    -oroot $TEMPLATE_IV_TO_HIRES_VIS_WARPROOT -oinv $TEMPLATE_IV_HIRES_WARP \
+    -gm $TMPDIR/lores_mask.nii.gz -fm $TMPDIR/lores_mask.nii.gz -it $TEMPLATE_IV_TO_HIRES_VIS_AFFINE
+
+  # Now map the hires MRI into the template space
+  greedy -d 3 -rf $TEMPLATE_IV_FLAIR_MTL \
+    -rm $HIRES_MRI_VIS $TEMPLATE_IV_HIRES_RESLICED \
+    -ri NN -rm $MOLD_MRI_MASK_VIS $TEMPLATE_IV_MASK_RESLICED \
+    -r $TEMPLATE_IV_TO_HIRES_VIS_AFFINE,-1 $TEMPLATE_IV_HIRES_WARP
+
+  # Use the current resliced images as starting point for iterative template
+  cp -av $TEMPLATE_IV_HIRES_RESLICED $TEMPLATE_HIRES_RESLICED
+  cp -av $TEMPLATE_IV_MASK_RESLICED $TEMPLATE_MASK_RESLICED
 }
 
 
 function template_register_and_reslice()
 {
-  local id args
-  read -r id args <<< "$@"
+  local id save_final_warp args
+  read -r id save_final_warp args <<< "$@"
   set_specimen_vars $id
 
   # Do registration
-  greedy -d 3 -i $TEMPLATE_IMG $HIRES_MRI_VIS \
-    -it $TEMPLATE_INIT_MATRIX \
-    -gm $TEMPLATE_MASK -fm $TEMPLATE_MASK -mm $MOLD_MRI_MASK_VIS -oroot $TEMPLATE_HIRES_WARP \
-    -n 100x40x20x0 -m NCC 4x4x4 -wp 0 -sv -s 3mm 0.5mm
+  greedy -d 3 -i $TEMPLATE_IMG $TEMPLATE_IV_HIRES_RESLICED \
+    -gm $TEMPLATE_MASK -fm $TEMPLATE_MASK -mm $TEMPLATE_IV_MASK_RESLICED -oroot $TEMPLATE_HIRES_WARP \
+    -n 100x40x20 -m NCC 2x2x2 -wp 0 -sv -s 3mm 0.5mm
 
   # Do reslicing
   greedy -d 3 -rf $TEMPLATE_IMG \
     -rm $HIRES_MRI_VIS $TEMPLATE_HIRES_RESLICED \
     -rm $MOLD_MRI_MASK_VIS $TEMPLATE_MASK_RESLICED \
-    -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_INIT_MATRIX
+    -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_IV_TO_HIRES_VIS_AFFINE,-1 $TEMPLATE_IV_HIRES_WARP
 
-  # Apply reslicing to the mask too
-  if [[ $id == $TEMPLATE_MANUAL_TARGET ]]; then
-    cp -av $TEMPLATE_MASK_RESLICED $TEMPLATE_MASK
+  # Save the complete warp from VIS space to template space
+  if [[ $save_final_warp -gt 0 ]]; then
+
+    greedy -d 3 -rf $TEMPLATE_IMG \
+      -rc $TEMPLATE_HIRES_VIS_FINAL_WARP.nii.gz \
+      -rj $TEMPLATE_HIRES_VIS_FINAL_JACOBIAN.nii.gz \
+      -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_IV_TO_HIRES_VIS_AFFINE,-1 $TEMPLATE_IV_HIRES_WARP
+
   fi
 }
 
@@ -3224,19 +3293,15 @@ function template_make_average()
 
   # The C3D command - do this to prevent loading everything into memory
   local CMD=""
-  local CMDWARP=""
   local CMDMASK=""
   for fn in "$TEMPLATE_DIR"/*_to_template_resliced.nii.gz; do
-    local WARP="${fn/_resliced/_warp}"
     local MASK="${fn/_resliced/_mask_resliced}"
     local PROC="$fn -stretch 0 98% 0 1000 -clip 0 1000 $MASK -times"
     if [[ $CMD == "" ]]; then
       CMD="$PROC"
-      CMDWARP="$WARP"
       CMDMASK="$MASK"
     else
       CMD="$CMD $PROC -add "
-      CMDWARP="$CMDWARP $WARP -add"
       CMDMASK="$CMDMASK $MASK -add"
     fi
   done
@@ -3244,35 +3309,52 @@ function template_make_average()
   # Compute the average. Places where fewer than 6 masks map to are excluded
   # from the mask and averaging, are set to zero. The mask is also saved
   c3d \
-    -verbose $CMDMASK -dup -thresh 6 inf 1 0 -as MASK -o $TMPDIR/template_mask_raw.nii.gz \
+    -verbose $CMDMASK -o $TMPDIR/template_soft_mask_raw.nii.gz \
+    -dup -thresh 6 inf 1 0 -as MASK -o $TMPDIR/template_mask_raw.nii.gz \
     -times -popas WEIGHT \
     $CMD -push MASK -times \
     -push WEIGHT -reciprocal -times -replace nan 0 \
     -o $TMPDIR/template_raw.nii.gz
 
-  # Compute and apply the shape correction
+  # Compute and apply the shape correction to the in vivo template
   if [[ $iter -gt 0 ]]; then
-    c3d -verbose $CMDWARP -scale $SCALE -o $TMPDIR/unwarp.nii.gz
+
     greedy -d 3 \
-      -rf $TEMPLATE_IMG \
+      -i $TEMPLATE_IV_FLAIR_MTL $TMPDIR/template_raw.nii.gz \
+      -mm $TMPDIR/template_mask_raw.nii.gz \
+      -o $TEMPLATE_EV_TO_IV_AFFINE \
+      -n 100x40x0 -m NCC 2x2x2 -a -ia-identity
+
+    greedy -d 3 \
+      -i $TEMPLATE_IV_FLAIR_MTL $TMPDIR/template_raw.nii.gz \
+      -mm $TMPDIR/template_mask_raw.nii.gz \
+      -o $TEMPLATE_EV_TO_IV_WARP \
+      -n 100x40x20 -m NCC 2x2x2 -wp 0 -sv -s 3mm 0.5mm -it $TEMPLATE_EV_TO_IV_AFFINE
+
+    greedy -d 3 \
+      -rf $TEMPLATE_IV_FLAIR_MTL \
       -rm $TMPDIR/template_raw.nii.gz $TEMPLATE_IMG \
-      -ri NEAREST -rm $TMPDIR/template_mask_raw.nii.gz $TEMPLATE_MASK \
-      -r $TMPDIR/unwarp.nii.gz,-64
+      -rm $TMPDIR/template_soft_mask_raw.nii.gz $TEMPLATE_SOFT_MASK \
+      -ri NN -rm $TMPDIR/template_mask_raw.nii.gz $TEMPLATE_MASK \
+      -r $TEMPLATE_EV_TO_IV_WARP $TEMPLATE_EV_TO_IV_AFFINE
   else
     cp -av $TMPDIR/template_raw.nii.gz $TEMPLATE_IMG
     cp -av $TMPDIR/template_mask_raw.nii.gz $TEMPLATE_MASK
+    cp -av $TMPDIR/template_soft_mask_raw.nii.gz $TEMPLATE_SOFT_MASK
   fi
 
   # Record this iteration
   cp -av $TEMPLATE_IMG $TEMPLATE_DIR/template_iter_${iter}.nii.gz
   cp -av $TEMPLATE_MASK $TEMPLATE_DIR/template_mask_iter_${iter}.nii.gz
+  cp -av $TEMPLATE_SOFT_MASK $TEMPLATE_DIR/template_soft_mask_iter_${iter}.nii.gz
 }
 
 
 function build_basic_template()
 {
   # Get a list of subjects to include in the template
-  TIDS=$(for f in "$ROOT"/manual/*/template/*.mat; do basename "$f" _to_template_affine.mat; done)
+  local TIDS=$(cat $MDIR/template_src.txt)
+  local NITER=10
 
   # Clear the template directory
   set_template_vars
@@ -3286,22 +3368,18 @@ function build_basic_template()
   done
   pybatch -w "tempinit_*"
 
-  # Compute the average
-  pybatch -N "tempavg_0" -m 16G $0 template_make_average 0
-  pybatch -w "tempavg_0"
-
-  # Perform the registrations and averages
-  for ((iter=1;iter<=20;iter++)); do
-
-    # Perform registrations
-    for id in $TIDS; do
-      pybatch -N "tempreg_${id}" -m 8G $0 template_register_and_reslice $id
-    done
-    pybatch -w "tempreg_*"
+  # Build the average and register everything to it
+  for ((iter=0;iter<=$NITER;iter++)); do
 
     # Compute the average
     pybatch -N "tempavg_${iter}" -m 16G $0 template_make_average ${iter}
     pybatch -w "tempavg_${iter}"
+
+    # Perform registrations
+    for id in $TIDS; do
+      pybatch -N "tempreg_${id}" -m 8G $0 template_register_and_reslice $id $((iter==NITER))
+    done
+    pybatch -w "tempreg_*"
 
   done
 }
@@ -3316,8 +3394,18 @@ function build_density_template()
   set_template_density_vars $stain $model
 
   # Get the list of all valid maps and masks
-  local DMAPS CMD_DMAP CMD_DMASK N SCALE LEVELS THRESHOLD
-  DMAPS=$(ls $ROOT/work/*/historeg/whole/*_template_density_${stain}_${model}.nii.gz)
+  local DMAPS CMD_DMAP CMD_DMASK N SCALE LEVELS THRESHOLD ID DMAP
+
+  # Get the list of IDs to include
+  DMAPS=""
+  for ID in $(cat $DENSITY_SUBJECT_MANIFEST); do
+    DMAP=$ROOT/work/$ID/historeg/whole/${ID}_template_density_${stain}_${model}.nii.gz
+    if [[ -f $DMAP ]]; then
+      DMAPS="$DMAPS $DMAP"
+    fi
+  done
+
+  # Get the scaling level
   N=$(echo $DMAPS | wc -w)
   SCALE=$(echo $N | awk '{print 1.0/$1}')
 
@@ -3342,6 +3430,15 @@ function build_density_template()
     -push X -thresh 4 inf 1 0 -o $TEMPLATE_DENSITY_AVGMAP_MASK \
     -times -o $TEMPLATE_DENSITY_AVGMAP
 
+  # Create a workspace with the template
+  itksnap-wt \
+    -laa $TEMPLATE_IMG -psn "9.4T MRI template" \
+    -laa $TEMPLATE_SOFT_MASK -psn "Template average mask" \
+    -laa $TEMPLATE_IV_FLAIR_WHOLE -psn "3T in vivo FLAIR template" \
+    -laa $TEMPLATE_DENSITY_AVGMAP -psn "Average $stain $model density" \
+    -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+    -o $TEMPLATE_DENSITY_WORKSPACE
+
   # Compute averages at mild, moderate, etc levels
   if [[ -f $DENSITY_CUTOFF_MANIFEST ]]; then
 
@@ -3353,10 +3450,11 @@ function build_density_template()
       CMD_DMAP=""
       for fn in $DMAPS; do
         local fn_mask=${fn/_density_/_density_mask_}
+        CMD="${fn} -thresh $THRESHOLD inf 1 0 ${fn_mask} -times -smooth-fast 0.5mm"
         if [[ $CMD_DMAP == "" ]]; then
-          CMD_DMAP="${fn} -thresh $THRESHOLD inf 1 0 -smooth-fast 1mm"
+          CMD_DMAP="$CMD"
         else
-          CMD_DMAP="$CMD_DMAP ${fn} -thresh $THRESHOLD inf 1 0 -smooth-fast 1mm -add"
+          CMD_DMAP="$CMD_DMAP ${CMD} -add"
         fi
       done
 
@@ -3364,16 +3462,130 @@ function build_density_template()
         -push X -thresh 4 inf 1 0 -o $TEMPLATE_DENSITY_AVGMAP_MASK \
         -times -o $(printf "$TEMPLATE_DENSITY_CUTOFF_AVGMAP_PATTERN" $level)
 
+      itksnap-wt \
+        -i $TEMPLATE_DENSITY_WORKSPACE \
+        -laa $(printf "$TEMPLATE_DENSITY_CUTOFF_AVGMAP_PATTERN" $level) \
+        -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+        -psn "$level $stain $model density freq." \
+        -o $TEMPLATE_DENSITY_WORKSPACE
+
     done
   fi
-
-
-
-
-
-
-
 }
+
+function specimen_export_bids()
+{
+  local id stain model args bid
+  read -r id stain model args <<< "$@"
+
+  set_specimen_vars $id
+  set_specimen_density_vars $id $stain $model
+
+  # Generate the BIDS id
+  bid="sub-$(cat $MDIR/bids_anon.txt | awk -v id=$id '$1 == id {print $2}')"
+
+  # Directory structure
+  BIDS_ROOT=$ROOT/bids
+  BIDS_9T_RAW_DIR=$BIDS_ROOT/$bid/ses-9T/anat
+  BIDS_9T_RAW_FNBASE=$BIDS_9T_RAW_DIR/${bid}_ses-9T_T2w
+
+  BIDS_7T_RAW_DIR=$BIDS_ROOT/$bid/ses-7T/anat
+  BIDS_7T_RAW_FNBASE=$BIDS_7T_RAW_DIR/${bid}_ses-7T_T2w
+
+  # Copy the raw images to BIDS
+  mkdir -p $BIDS_7T_RAW_DIR
+  cp -avL $MOLD_MRI $BIDS_7T_RAW_FNBASE.nii.gz
+  jq <<JSON1 . > $BIDS_7T_RAW_FNBASE.json
+    {
+    "Manufacturer": "SIEMENS",
+    "ManufacturerModelName": "Investigational_Device_7T",
+    "MagneticFieldStrength": 7
+    }
+JSON1
+
+  mkdir -p $BIDS_9T_RAW_DIR
+  cp -avL $HIRES_MRI $BIDS_9T_RAW_FNBASE.nii.gz
+  jq <<JSON2 . > $BIDS_9T_RAW_FNBASE.json
+    {
+      "Manufacturer":"Bruker BioSpin MRI GmbH",
+      "ManufacturerModelName":"BioSpec 94/30",
+      "MagneticFieldStrength":9.384227842
+    }
+JSON2
+  exit
+  # Now put together the derived stuff in whole specimen space
+  BIDS_WHOLEMTL_DIR=$BIDS_ROOT/derivatives/historecon-subjspace/$bid/
+  mkdir -p $BIDS_WHOLEMTL_DIR
+
+  # Copy the workspace and rename all the layers in the workspace to BIDS compatible
+  itksnap-wt \
+    -i $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE \
+    -lp 0 -props-rename-file $BIDS_WHOLEMTL_DIR/${bid}_space-wholemtl_ses-9T_T2w.nii.gz \
+    -lp 1 -props-rename-file $BIDS_WHOLEMTL_DIR/${bid}_space-wholemtl_nissl.nii.gz \
+    -lp 2 -props-rename-file $BIDS_WHOLEMTL_DIR/${bid}_space-wholemtl_stain-${stain}_ihc.nii.gz \
+    -lp 3 -props-rename-file $BIDS_WHOLEMTL_DIR/${bid}_space-wholemtl_stain-${stain}_model-${model}_density.nii.gz \
+    -lp 4 -props-rename-file $BIDS_WHOLEMTL_DIR/${bid}_space-wholemtl_stain-${stain}_model-${model}_mask.nii.gz \
+    -o $BIDS_WHOLEMTL_DIR/${bid}_space-wholemtl_stain-${stain}_model-${model}_workspace.itksnap
+
+  # Now create maps in template space
+  BIDS_TEMPSPACE_DIR=$BIDS_ROOT/derivatives/historecon-tempspace/$bid/
+  mkdir -p $BIDS_TEMPSPACE_DIR
+
+  # Copy the workspace and rename all the layers in the workspace to BIDS compatible
+  itksnap-wt \
+    -i $TEMPLATE_DENSITY_SPLAT_WORKSPACE \
+    -lp 0 -props-rename-file $BIDS_TEMPSPACE_DIR/${bid}_space-template_ses-9T_T2w.nii.gz \
+    -lp 1 -props-rename-file $BIDS_TEMPSPACE_DIR/${bid}_space-template_stain-${stain}_model-${model}_density.nii.gz \
+    -lp 2 -props-rename-file $BIDS_TEMPSPACE_DIR/${bid}_space-template_stain-${stain}_model-${model}_mask.nii.gz \
+    -o $BIDS_TEMPSPACE_DIR/${bid}_template_workspace.itksnap
+}
+
+
+function template_export_bids()
+{
+  local stain model args bid
+  read -r stain model args <<< "$@"
+
+  set_template_vars
+  set_template_density_vars $stain $model
+
+  BIDS_ROOT=$ROOT/bids
+  BIDS_TEMPLATE_DIR=$BIDS_ROOT/derivatives/historecon-tempspace/template
+  mkdir -p $BIDS_TEMPLATE_DIR
+
+  itksnap-wt \
+    -i $TEMPLATE_DENSITY_WORKSPACE \
+    -lp 0 -props-rename-file $BIDS_TEMPLATE_DIR/template_exvivo_9T_T2w.nii.gz \
+    -lp 1 -props-rename-file $BIDS_TEMPLATE_DIR/template_exvivo_softmask.nii.gz \
+    -lp 2 -props-rename-file $BIDS_TEMPLATE_DIR/template_invivo_3T_FLAIR.nii.gz \
+    -lp 3 -props-rename-file $BIDS_TEMPLATE_DIR/template_stain-${stain}_model-${model}_avg_burden.nii.gz \
+    -lp 4 -props-rename-file $BIDS_TEMPLATE_DIR/template_stain-${stain}_model-${model}_freq_rare.nii.gz \
+    -lp 5 -props-rename-file $BIDS_TEMPLATE_DIR/template_stain-${stain}_model-${model}_freq_mild.nii.gz \
+    -lp 6 -props-rename-file $BIDS_TEMPLATE_DIR/template_stain-${stain}_model-${model}_freq_moderate.nii.gz \
+    -lp 7 -props-rename-file $BIDS_TEMPLATE_DIR/template_stain-${stain}_model-${model}_freq_severe.nii.gz \
+    -o $BIDS_TEMPLATE_DIR/template_stain-${stain}_model-${model}_workspace.itksnap
+
+    cp -av $ROOT/scripts/bids_src/README $BIDS_ROOT/
+    cp -av $ROOT/scripts/bids_src/dataset_description.json $BIDS_ROOT/
+}
+
+function eval_var()
+{
+  echo $1=$(eval "echo \$$1");
+}
+
+function eval_specimen_var()
+{
+  set_specimen_vars ${1?}
+  eval_var ${2?}
+}
+
+function eval_block_var()
+{
+  set_block_vars ${1?} ${2?}
+  eval_var ${3?}
+}
+
 
 
 function main()
