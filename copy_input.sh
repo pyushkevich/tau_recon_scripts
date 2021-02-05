@@ -1,26 +1,33 @@
-  #!/bin/bash
+#!/bin/bash
 set -x -e
 
 # Read local configuration
+MDIR=
 if [[ $ROOT ]]; then
-  . $ROOT/scripts/common.sh
+  # shellcheck source=scripts/common.sh
+  . "$ROOT/scripts/common.sh"
 else
+  # shellcheck source=scripts/common.sh
   . "$(dirname $0)/common.sh"
 fi
 
-# Parse the manifest file
+# Copy blockface images from GCS to local storage
 function copy_blockface()
 {
-  while IFS=$'\t' read -r ID BLOCK REMOTEDIR args; do
+  REGEXP=$1
 
-    # Create the corresponding input directory
-    IDIR=$ROOT/input/$ID/blockface/$BLOCK
-    mkdir -p $IDIR
+  grep "$REGEXP" "$MDIR/blockface_src.txt" | while read -r ID BLOCKS; do
+    for BLOCK in $BLOCKS; do
 
-    # Rsync the files
-    gsutil -m cp -n "gs://mtl_histology/${ID}/bf_raw/${ID}_${BLOCK}_??_??.jpg" $IDIR/
+      # Create the corresponding input directory
+      IDIR=$ROOT/input/$ID/blockface/$BLOCK
+      mkdir -p "$IDIR"
 
-  done < $MDIR/blockface_src.txt
+      # Rsync the files
+      gsutil -m cp -n "gs://mtl_histology/${ID}/bf_raw/${ID}_${BLOCK}_??_??.jpg" "$IDIR/"
+
+    done
+  done
 }
 
 # Organize the MRIs
@@ -34,7 +41,7 @@ function copy_mold_mri()
 
     # Copy needed files
     for fn in mtl7t.nii.gz contour_image.nii.gz slitmold.nii.gz holderrotation.mat; do
-      rsync -av ${MOLD_SRC_DIR?}/$SDIR/$fn $IDIR/
+      rsync -av ${MOLD_SRC_DIR?}/$ID/$SDIR/$fn $IDIR/
     done
 
   done < $MDIR/moldmri_src.txt
@@ -62,13 +69,7 @@ function copy_hires_mri()
     fi
 
     # Copy needed files
-    docker run \
-      -v ~/.config/flywheel:/root/.config/flywheel:rw \
-      -v $IDIR:/fw:rw \
-      pyushkevich/flywheel-cli:latest \
-      fw download -o "$FN" "$FWPATH"
-
-    # fw download -o $FN "$FWPATH"
+    fw download -o $FN "$FWPATH"
 
     # Compress if needed
     if [[ $FN =~ nii$ ]]; then
@@ -104,7 +105,7 @@ function setup_manual_mri_regs()
 }
 
 # Main entrypoint
-# copy_blockface
-# copy_mold_mri
+copy_blockface "$@"
+copy_mold_mri
 copy_hires_mri
 setup_manual_mri_regs

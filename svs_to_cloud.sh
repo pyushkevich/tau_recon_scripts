@@ -1,15 +1,16 @@
 #!/bin/bash
-# set -x -e
+set -x -e
 
 # ----------------------------------------------------
 # Scripts to perform preprocessing of histology on GCP
+# and synchronize data in GCP with local storage.
 # ----------------------------------------------------
 
 # Globals
-if [[ $RECON_ROOT ]]; then
-  ROOT=$RECON_ROOT
+if [[ $TAU_ATLAS_ROOT ]]; then
+  . $TAU_ATLAS_ROOT/scripts/common.sh
 else
-  ROOT=/data/picsl/pauly/tau_atlas
+  . "$(dirname $0)/common.sh"
 fi
 
 MDIR=$ROOT/manifest
@@ -17,7 +18,8 @@ MDIR=$ROOT/manifest
 # Run kubectl with additional options
 function kube()
 {
-  kubectl --server https://kube.itksnap.org --insecure-skip-tls-verify=true "$@"
+  # kubectl --server https://kube.itksnap.org --insecure-skip-tls-verify=true "$@"
+  kubectl "$@"
 }
 
 # Get all the slide identifiers in the manifest file for a specimen
@@ -29,8 +31,8 @@ function get_specimen_manifest_slides()
   # Match the id in the manifest
   url=$(cat $MDIR/histo_matching.txt | awk -v id=$id '$1 == id {print $2}')
   if [[ ! $url ]]; then
-    echo "Missing histology matching data in Google sheets"
-    return -1
+    >&2 echo "Missing histology matching data in Google sheets"
+    return 255
   fi
 
   # Apply filters
@@ -40,7 +42,7 @@ function get_specimen_manifest_slides()
   fi
     
   # Read the relevant slides in the manifest
-  curl -s "$url" 2>&1 | \
+  curl -Ls "$(echo $url | sed -e "s/\\\\//g")" 2>&1 | \
     grep -v duplicate | \
     grep -v multiple | \
     awk -F, "$AWKCMD"
@@ -356,6 +358,34 @@ function nissl_multichannel_all()
     nissl_multichannel_specimen $id $force
   done
 }
+
+# Bring files from the cloud to local storage
+function rsync_histo_proc()
+{
+  read -r id args <<< "$@"
+
+  # Location of the histology data in the cloud
+  local SPECIMEN_HISTO_GCP_ROOT="gs://mtl_histology/${id}/histo_proc"
+  local SPECIMEN_HISTO_LOCAL_ROOT="$ROOT/input/${id}/histo_proc"
+
+  # Create some exclusions
+  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff"
+  mkdir -p "$SPECIMEN_HISTO_LOCAL_ROOT"
+  gsutil -m rsync -R -x "$EXCL" "$SPECIMEN_HISTO_GCP_ROOT/" "$SPECIMEN_HISTO_LOCAL_ROOT/"
+}
+
+# Bring files from the cloud to local storage
+function rsync_histo_all()
+{
+  REGEXP=$1
+
+  cat $MDIR/histo_matching.txt | grep "$REGEXP" | while read -r id; do
+
+    rsync_histo_proc $id
+
+  done
+}
+
 
 
 

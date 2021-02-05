@@ -159,7 +159,6 @@ function set_specimen_vars()
   MOLD_MRI_MASK_VIS=$MRI_WORK_DIR/${id}_mold_mri_mask_vis.nii.gz
 
   # Location of the histology data in the cloud
-  SPECIMEN_HISTO_GCP_ROOT="gs://mtl_histology/${id}/histo_proc"
   SPECIMEN_HISTO_LOCAL_ROOT="$ROOT/input/${id}/histo_proc"
 
   # Location where to place splats
@@ -359,7 +358,7 @@ function set_block_vars()
 
   # Data extracted from the histology matching spreadsheets
   HISTO_MATCH_MANIFEST=$HISTO_REG_DIR/match_manifest.txt
-  HISTO_RECON_MANIFEST=$HISTO_REG_DIR/recon_manifest.txt
+  HISTO_RECON_EXPECTED=$HISTO_REG_DIR/recon_manifest.txt
 
   # Manifest of Deepcluster based MRI-like images
   HISTO_DEEPCLUSTER_MRILIKE_ROUGH_MANIFEST=$HISTO_REG_DIR/dc2mri_rough_manifest.txt
@@ -621,18 +620,150 @@ function set_ihc_slice_density_vars()
   SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING=${sdmbase}_densitymap_thresh_to_nissl.nii.gz
 }
 
-# Locate the SVS file on histology drive
-function get_slide_url()
+# Check a single file
+function check_file()
 {
-  local SVS=${1?}
-  local URLLIST=$ROOT/input/histology/slide_src.txt
+  local RED='\033[0;31m'
+  local GREEN='\033[0;32m'
+  local NC='\033[0m' # No Color
+  if [[ -f ${1?} ]]; then
+    echo -e "${GREEN}Found${NC}"
+  else
+    echo -e "${RED}Not Found${NC}"
+  fi
+}
 
-  for url in $(cat $URLLIST); do
-    local x=$(basename $url | sed -e "s/\..*//")
-    if [[ $x == $SVS ]]; then
-      echo $url
-    fi
+# Check a file count
+function check_file_count()
+{
+  local RED='\033[0;31m'
+  local GREEN='\033[0;32m'
+  local NC='\033[0m' # No Color
+  local GLOB=${1?}
+  local FILES=($GLOB)
+  local NUMFILES=${#FILES[@]}
+  if [[ $NUMFILES -gt 0 ]]; then
+    echo -e "${GREEN}${NUMFILES}${NC}"
+  else
+    echo -e "${RED}${NUMFILES}${NC}"
+  fi
+}
+
+function check_fraction()
+{
+  local RED='\033[0;31m'
+  local GREEN='\033[0;32m'
+  local NC='\033[0m' # No Color
+  if [[ $1 -eq $2 ]]; then
+    echo -e "${GREEN}${1}/${2}${NC}"
+  else
+    echo -e "${RED}${1}/${2}${NC}"
+  fi
+}
+
+# Check the input data for a specimen. This will double check that all the necessary
+# input files are present for a specimen
+function check_specimen_inputs()
+{
+  # Don't trace inside of check functions
+  local tracestate=$(shopt -po xtrace); set +x
+
+  # Read the ID
+  read -r id <<< "$@"
+
+  # Load specimen vars
+  set_specimen_vars $id
+
+  # Check MRI
+  echo "=== Checking MRI inputs ==="
+  echo "7T MRI: $(check_file $MOLD_MRI)"
+  echo "7T Tissue Contour: $(check_file $MOLD_CONTOUR)"
+  echo "Cutting Mold Reference Image: $(check_file $MOLD_BINARY_NATIVE)"
+  echo "Cutting Mold Transform: $(check_file $MOLD_RIGID_MAT_NATIVE)"
+  echo "9.4T MRI: $(check_file $HIRES_MRI)"
+
+  # Check blockface files
+  echo "=== Checking Blockface inputs ==="
+  read -r dummy blocks <<< "$(grep "^${id}" "$MDIR/blockface_src.txt")"
+  echo "Blocks with Blockface Images: $(echo $blocks | wc -w)"
+  for block in $blocks; do
+    set_block_vars $id $block
+    echo "Block ${block} Blockface Images:" $(check_file_count "$BF_INPUT_DIR/*.jpg")
   done
+
+  # Check NISSL slides
+  echo "=== Checking Histology inputs ==="
+
+  # Go over the blocks
+  for block in $blocks; do
+
+    # Update the histology manifest for this block
+    pull_histo_match_manifest $id $block
+
+    # Loop over stains
+    for active_stain in NISSL Tau; do
+
+      # Get the list of models for this stain
+      mapfile -t density_models < <(awk -v s=$active_stain '$1==s {print $2}' < $MDIR/density_scaling_vis.txt)
+      #local density_models=(( $(awk -v s=$active_stain '$1==s {print $2}' < $MDIR/density_scaling_vis.txt) ))
+      local N_MODELS=${#density_models[*]}
+
+      # Keep track of counts
+      local N_PROC=0
+      local N_DEEPCLUSTER=0
+      local N_EXPECTED=0
+      local N_DENSITY=0
+      local N_DENSITY_EXPECTED=0
+
+      # Read the individual slides
+      while IFS=, read -r svs stain dummy section slice args; do
+
+        # Check the stain
+        if [[ $stain == $active_stain ]]; then
+
+          # Add to the manifest count
+          N_EXPECTED=$((N_EXPECTED+1))
+          N_DENSITY_EXPECTED=$((N_DENSITY_EXPECTED+N_MODELS))
+
+          # Load the stain information
+          set_ihc_slice_vars $id $block $svs $stain $section $slice $args
+
+          # Check if the slide has basic preprocessing data
+          if [[ -f $SLIDE_THUMBNAIL && -f $SLIDE_RGB && -f $SLIDE_METADATA && -f $SLIDE_RAW_RESOLUTION_FILE ]]; then
+            N_PROC=$((N_PROC+1))
+            if [[ -f $SLIDE_DEEPCLUSTER ]]; then
+              N_DEEPCLUSTER=$((N_DEEPCLUSTER+1))
+            fi
+
+            for model in ${density_models[*]}; do
+              set_ihc_slice_density_vars $svs $stain $model
+              if [[ -f $SLIDE_DENSITY_MAP ]]; then
+                N_DENSITY=$((N_DENSITY+1))
+              fi
+            done
+          fi
+
+        fi
+
+      done < $HISTO_MATCH_MANIFEST
+
+      if [[ $N_EXPECTED -gt 0 ]]; then
+        echo "Block ${block} Stain ${active_stain} Preprocessed Slides:" $(check_fraction $N_PROC $N_EXPECTED)
+        if [[ $active_stain == "NISSL" ]]; then
+          echo "Block ${block} Stain ${active_stain} DeepCluster Slides:" $(check_fraction $N_DEEPCLUSTER $N_EXPECTED)
+        fi
+      fi
+
+      if [[ $N_DENSITY_EXPECTED -gt 0 ]]; then
+        echo "Block ${block} Stain ${active_stain} Density Maps:" $(check_fraction $N_DENSITY $N_DENSITY_EXPECTED)
+      fi
+
+    done
+
+  done
+
+  # Restore trace state
+  set +vx; eval $tracestate
 }
 
 
@@ -1167,32 +1298,46 @@ function register_blockface_all()
   pybatch -w "reg_bf_*"
 }
 
-
-function rsync_histo_proc()
+# Uses curl to download a file
+function curl_download_url()
 {
-  read -r id args <<< "$@"
+  local URL FILE CURL_OPTS
+  read -r URL FILE CURL_OPTS <<< "$@"
 
-  set_specimen_vars $id
+  echo "CURL_OPTS=$CURL_OPTS"
 
-  # Create some exclusions
-  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff"
-  mkdir -p $SPECIMEN_HISTO_LOCAL_ROOT
-  gsutil -m rsync -R -x "$EXCL" $SPECIMEN_HISTO_GCP_ROOT/ $SPECIMEN_HISTO_LOCAL_ROOT/
+  if [[ $CURL_SSH_HOST ]]; then
+    # SSH to a remote host before getting the web-based resource
+    # -n is critical here, otherwise stdin gets messed with and read does not work
+    ssh -n -q -o BatchMode=yes -o StrictHostKeyChecking=no $CURL_SSH_HOST \
+      curl -L -s -f --retry 4 -o "$FILE" "$CURL_OPTS" "$URL"
+  else
+    curl -L -s -f --retry 4 -o "$FILE" "$CURL_OPTS" "$URL"
+  fi
 }
 
-function rsync_histo_all()
+# Uses curl to print a remote URL
+function curl_cat_url()
 {
-  REGEXP=$1
+  local URL CURL_OPTS
+  read -r URL CURL_OPTS <<< "$@"
 
-  cat $MDIR/histo_matching.txt | grep "$REGEXP" | while read -r id args; do
-
-    rsync_histo_proc $id
-
-  done
+  if [[ $CURL_SSH_HOST ]]; then
+    # SSH to a remote host before getting the web-based resource
+    # -n is critical here, otherwise stdin gets messed with and read does not work
+    ssh -n -q -o BatchMode=yes -o StrictHostKeyChecking=no $CURL_SSH_HOST \
+      curl -L -s -f --retry 4 "$CURL_OPTS" "$URL"
+  else
+    curl -L -s -f --retry 4 "$CURL_OPTS" "$URL"
+  fi
 }
+
+
 
 function pull_histo_match_manifest()
 {
+  local id block args
+
   # What specimen and block are we doing this for?
   read -r id block args <<< "$@"
 
@@ -1206,14 +1351,17 @@ function pull_histo_match_manifest()
   local url=$(cat $MDIR/histo_matching.txt | awk -v id=$id '$1 == id {print $2}')
   if [[ ! $url ]]; then
     echo "Missing histology matching data in Google sheets"
-    return
+    return 255
   fi
 
   # Load the manifest and parse for the block of interest, put into temp file
   local TMPFILE_FULL=$TMPDIR/manifest_full_${id}_${block}.txt
   local TMPFILE=$TMPDIR/manifest_${id}_${block}.txt
 
-  curl -L -s "$url" > "$TMPFILE_FULL" 2>&1
+  if ! curl_cat_url "$url" > "$TMPFILE_FULL"; then
+    echo "Unable to download $url"
+    return 255
+  fi
 
   cat $TMPFILE_FULL | \
     grep -v duplicate | \
@@ -1350,7 +1498,7 @@ function rough_map_deepcluster_to_mri()
       -int 0 -reslice-identity -times \
       -o $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK
 
-  done < $HISTO_RECON_MANIFEST
+  done < $HISTO_RECON_EXPECTED
 }
 
 
@@ -1405,7 +1553,7 @@ function fit_deepcluster_to_mri()
     # Add line to the manifest for stack_greedy
     echo $svs $SLIDE_DEEPCLUSTER_MRILIKE >> $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
 
-  done < $HISTO_RECON_MANIFEST
+  done < $HISTO_RECON_EXPECTED
 
   # And now do the remapping
   Rscript $ROOT/scripts/fit_multichannel.R \
@@ -1421,9 +1569,6 @@ function recon_histology()
   # What specimen and block are we doing this for?
   read -r id block skip_reg args <<< "$@"
 
-  # Make sure data is synced. NOTE: this is slowing things down. Run by hand
-  ### rsync_histo_proc $id
-
   # Set the block variables
   set_block_vars $id $block
 
@@ -1435,12 +1580,12 @@ function recon_histology()
 
   # For each slice in the manifest, determine its z coordinate. This is done by looking
   # up the slice in the list of all slices going into the blockface image
-  rm -f $HISTO_RECON_MANIFEST
+  rm -f $HISTO_RECON_EXPECTED
 
   # Additional manifest: for generating RGB NISSL images
   rm -f $HISTO_NISSL_RGB_SPLAT_MANIFEST
   rm -f $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
-  rm -f $HISTO_HISTO_ANNOT_SPLAT_MANIFEST
+  rm -f $HISTO_ANNOT_SPLAT_MANIFEST
   rm -f $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST
   rm -f $HISTO_DEEPCLUSTER_MRILIKE_ROUGH_MANIFEST
 
@@ -1492,7 +1637,7 @@ function recon_histology()
     # The main manifest lists the RGB NISSL slide
     echo $svs $ZPOS 1 \
       $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH \
-      $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK >> $HISTO_RECON_MANIFEST
+      $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK >> $HISTO_RECON_EXPECTED
 
     # Deep cluster MRI-like slide manifest
     echo $svs $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH >> $HISTO_DEEPCLUSTER_MRILIKE_ROUGH_MANIFEST
@@ -1515,7 +1660,7 @@ function recon_histology()
   done < $HISTO_MATCH_MANIFEST
 
   # If no manifest generated, return
-  if [[ ! -f $HISTO_RECON_MANIFEST ]]; then
+  if [[ ! -f $HISTO_RECON_EXPECTED ]]; then
     echo "No histology slides found"
     return
   fi
@@ -1534,7 +1679,7 @@ function recon_histology()
     rough_map_deepcluster_to_mri $id $block iter00
 
     # Run processing with stack_greedy
-    stack_greedy init -M $HISTO_RECON_MANIFEST -gm $HISTO_RECON_DIR
+    stack_greedy init -M $HISTO_RECON_EXPECTED -gm $HISTO_RECON_DIR
 
     # Jan 2020: the zeps=4 value seems to work better for the NCC metric, the
     # previously used value of 0.5 ended up having lots of slices skipped. But
@@ -2043,7 +2188,7 @@ function recon_histo_all()
   skip_reg=$2
 
   # Process the individual blocks
-  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+  grep "$REGEXP" "$MDIR/blockface_param.txt" | while read -r id block args; do
 
     # Pull the histology manifest (no need for qsubbing)
     pull_histo_match_manifest $id $block
@@ -2248,12 +2393,6 @@ function recon_for_histo_manseg_all()
   qsub $QSUBOPT -b y -sync y -hold_jid "recon_manseg_*" /bin/sleep 0
 }
 
-# Run kubectl with additional options
-function kube()
-{
-  kubectl --server https://kube.itksnap.org --insecure-skip-tls-verify=true "$@"
-}
-
 # Helper function for splatting
 function splat_block()
 {
@@ -2262,11 +2401,11 @@ function splat_block()
   read -r id block manifest stage result opts <<< "$@"
 
   # Get the z-range for splatting from the manifest file
-  local MAIN_MANIFEST=$HISTO_RECON_DIR/config/manifest.txt
+  local MAIN_EXPECTED=$HISTO_RECON_DIR/config/manifest.txt
 
   # Splat the NISSL slides if they are available
-  local nissl_z0=$(cat $MAIN_MANIFEST | cut -d ' ' -f 2 | sort -n | head -n 1)
-  local nissl_z1=$(cat $MAIN_MANIFEST | cut -d ' ' -f 2 | sort -n | tail -n 1)
+  local nissl_z0=$(cat $MAIN_EXPECTED | cut -d ' ' -f 2 | sort -n | head -n 1)
+  local nissl_z1=$(cat $MAIN_EXPECTED | cut -d ' ' -f 2 | sort -n | tail -n 1)
   local nissl_zstep=0.5
 
   # Do the splatting if manifest exists
@@ -2330,7 +2469,7 @@ function find_nissl_slide()
   if [[ $svs_nissl ]]; then
 
     # Also check that the slide made it to the recon manifest
-    local zpos_nissl=$(cat ${HISTO_RECON_MANIFEST?} | \
+    local zpos_nissl=$(cat ${HISTO_RECON_EXPECTED?} | \
       awk -v svs=$svs_nissl '$1==svs { print $2 }')
 
     if [[ $zpos_nissl ]]; then
@@ -2973,68 +3112,75 @@ function merge_splat_all()
 #   SVG_CURL_OPTS: options to pass curl
 function download_svg()
 {
-  local task_id svs WDIR
+  local task_id svs WDIR TS_URL TS_REMOTE_JSON_COPY TS_REMOTE
+  local LOCAL_SVG LOCAL_PNG LOCAL_TIMESTAMP_JSON
 
   # Read the inputs
   read -r task_id svs WDIR <<< "$@"
 
   # Get the timestamp of the annotation
-  local TS_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/timestamp"
-  local TS_REMOTE_JSON=$(curl -ksf $TS_URL)
-  local TS_REMOTE=$(echo $TS_REMOTE_JSON | jq .timestamp)
+  TS_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/timestamp"
+  TS_REMOTE_JSON_COPY=$TMPDIR/${svs}_remote_ts.json
+  if ! curl_cat_url "$TS_URL" > $TS_REMOTE_JSON_COPY; then
+    echo "Unable to download $TS_URL"
+    return
+  fi
+
+  # Read the timestamp
+  TS_REMOTE=$(jq .timestamp < $TS_REMOTE_JSON_COPY)
 
   # The different filenames that will be output by this function
-  local LOCAL_SVG=$WDIR/${svs}_annot.svg
-  local LOCAL_PNG=$WDIR/${svs}_annot.png
-  local LOCAL_TIMESTAMP_JSON=$WDIR/${svs}_timestamp.json
+  LOCAL_SVG=$WDIR/${svs}_annot.svg
+  LOCAL_PNG=$WDIR/${svs}_annot.png
+  LOCAL_TIMESTAMP_JSON=$WDIR/${svs}_timestamp.json
 
-    # If there is nothing on the server, clean up locally and stop
-    if [[ $TS_REMOTE == "null" ]]; then
-      rm -f $LOCAL_SVG $LOCAL_TIMESTAMP_JSON $LOCAL_PNG
+  # If there is nothing on the server, clean up locally and stop
+  if [[ $TS_REMOTE == "null" ]]; then
+    rm -f $LOCAL_SVG $LOCAL_TIMESTAMP_JSON $LOCAL_PNG
+    return
+  fi
+
+  # Does the SVG exist? Then check if it is current
+  if [[ -f $LOCAL_SVG ]]; then
+    local TS_LOCAL
+    if [[ -f $LOCAL_TIMESTAMP_JSON ]]; then
+      TS_LOCAL=$(cat $LOCAL_TIMESTAMP_JSON | jq .timestamp)
+    else
+      TS_LOCAL=0
+    fi
+
+    if [[ $(echo "$TS_REMOTE > $TS_LOCAL" | bc) -eq 1 ]]; then
+      rm -f $LOCAL_SVG
+    else
+      echo "File $LOCAL_SVG is up to date"
+    fi
+  fi
+
+  if [[ ! -f $LOCAL_SVG ]]; then
+    # Download the SVG
+    local SVG_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/svg"
+    if ! curl_download_url "$SVG_URL" "$LOCAL_SVG" "$SVG_CURL_OPTS"; then
+      echo "Unable to download $LOCAL_SVG"
       return
     fi
 
-    # Does the SVG exist? Then check if it is current
-    if [[ -f $LOCAL_SVG ]]; then
-      local TS_LOCAL
-      if [[ -f $LOCAL_TIMESTAMP_JSON ]]; then
-        TS_LOCAL=$(cat $LOCAL_TIMESTAMP_JSON | jq .timestamp)
-      else
-        TS_LOCAL=0
-      fi
+    # Record the timestamp
+    echo $TS_REMOTE_JSON > $LOCAL_TIMESTAMP_JSON
 
-      if [[ $(echo "$TS_REMOTE > $TS_LOCAL" | bc) -eq 1 ]]; then
-        rm -f $LOCAL_SVG
-      else
-        echo "File $LOCAL_SVG is up to date"
-      fi
-    fi
+    # Make sure the PNG gets generated
+    rm -f $LOCAL_PNG
+  fi
 
-    if [[ ! -f $LOCAL_SVG ]]; then
-      # Download the SVG
-      local SVG_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/svg"
-      if ! curl -ksfo $LOCAL_SVG --retry 4 $SVG_CURL_OPTS $SVG_URL; then
-        echo "Unable to download $LOCAL_SVG"
-        return
-      fi
+  # Now that we have the SVG, convert it to PNG format. No need to fix it
+  # to a given size, that will happen later during splatting
+  if [[ ! -f $LOCAL_PNG ]]; then
 
-      # Record the timestamp
-      echo $TS_REMOTE_JSON > $LOCAL_TIMESTAMP_JSON
+    # Convert SVG to PNG
+    convert -density 2 -depth 8 $LOCAL_SVG \
+      -set colorspace Gray -separate -average -negate \
+      $LOCAL_PNG
 
-      # Make sure the PNG gets generated
-      rm -f $LOCAL_PNG
-    fi
-
-    # Now that we have the SVG, convert it to PNG format. No need to fix it
-    # to a given size, that will happen later during splatting
-    if [[ ! -f $LOCAL_PNG ]]; then
-
-      # Convert SVG to PNG
-      convert -density 2 -depth 8 $LOCAL_SVG \
-        -set colorspace Gray -separate -average -negate \
-        $LOCAL_PNG
-
-    fi
+  fi
 }
 
 
@@ -3098,19 +3244,19 @@ function rsync_histo_annot_all()
   REGEXP=$1
 
   # Process the individual blocks
-  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
+  grep "$REGEXP" "$MDIR/blockface_param.txt" | while read -r id block args; do
 
     # Pull the histology manifest (no need for qsubbing)
     pull_histo_match_manifest $id $block
 
-    # Submit the jobs
-    qsub $QSUBOPT -N "rsync_histo_annot_${id}_${block}" \
-      $0 rsync_histo_annot $id $block
+    # Better to run sequentially to reduce server load
+    ### pybatch -N "rsync_histo_annot_${id}_${block}" \
+    rsync_histo_annot $id $block
 
   done
 
   # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "rsync_histo_annot_*" /bin/sleep 0
+  ### pybatch -w "rsync_histo_annot_*"
 }
 
 # Generate some final QC for a block

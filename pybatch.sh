@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x -e
 
 function usage()
 {
@@ -8,6 +9,8 @@ function usage()
 # Check if using SLURM
 if sbatch --version 1> /dev/null 2> /dev/null ; then
   MODE="SLURM";
+elif lsid 1> /dev/null 2> /dev/null ; then
+  MODE="LSF"
 else
   MODE="SGE"
 fi
@@ -69,6 +72,18 @@ if [[ $MODE == "SLURM" ]]; then
     else
       exit $?
     fi
+  fi
+
+elif [[ $MODE == "LSF" ]]; then
+
+  if [[ $WAITPATTERN ]]; then
+    bsub -K -w "${WAITPATTERN}" /bin/sleep 30
+  else
+    if [[ $MEMORY ]]; then
+      MEMCMD="-M $MEMORY"
+    fi
+    bsub ${PYBATCH_LSF_OPTS} \
+      -cwd "$PWD" -o "${DUMPDIR?}/${JOBNAME?}.o%J" -J "${JOBNAME?}" $MEMCMD "$@"
   fi
 
 elif [[ $MODE == "SGE" ]]; then
