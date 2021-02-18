@@ -378,15 +378,64 @@ function rsync_histo_proc()
 function rsync_histo_all()
 {
   REGEXP=$1
-
   cat $MDIR/histo_matching.txt | grep "$REGEXP" | while read -r id; do
-
     rsync_histo_proc $id
-
   done
 }
 
+function blockface_multichannel_block()
+{
+  read -r id block force args <<< "$@"
 
+  # Geberate a job ID and YAML file
+  JOB=$(echo $id $block | md5sum | cut -c 1-6)
+  YAML=/tmp/density_${JOB}.yaml
+
+  # Do YAML substitution
+  cat $ROOT/scripts/yaml/blockface_multichan.template.yaml | \
+    sed -e "s/%ID%/${id}/g" -e "s/%JOBID%/${JOB}/g" -e "s/%BLOCK%/${block}/g" \
+    > $YAML
+
+  # Run the yaml
+  echo "Scheduling job $id $block $YAML"
+  kube apply -f $YAML
+}
+
+function blockface_multichannel_all()
+{
+  while read -r id blocks; do
+
+    for b in $blocks; do
+
+      blockface_multichannel_block $id $b
+
+    done
+
+  done < "$MDIR/blockface_src.txt"
+}
+
+# Bring files from the cloud to local storage
+function rsync_bf_proc()
+{
+  read -r id args <<< "$@"
+
+  # Location of the histology data in the cloud
+  local SPECIMEN_BF_GCP_ROOT="gs://mtl_histology/${id}/bf_proc"
+  local SPECIMEN_BF_LOCAL_ROOT="$ROOT/input/${id}/bf_proc"
+
+  # Create some exclusions
+  local EXCL=".*\.png|.*\.tiff"
+  mkdir -p "$SPECIMEN_BF_LOCAL_ROOT"
+  gsutil -m rsync -R -x "$EXCL" "$SPECIMEN_BF_GCP_ROOT/" "$SPECIMEN_BF_LOCAL_ROOT/"
+}
+
+function rsync_bf_proc_all()
+{
+  REGEXP=$1
+  cat $MDIR/blockface_src.txt | grep "$REGEXP" | while read -r id; do
+    rsync_bf_proc $id
+  done
+}
 
 
 # Main entrypoint into script

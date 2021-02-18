@@ -124,14 +124,19 @@ function set_specimen_vars()
   HIRES_MRI=$HIRES_MRI_INPUT_DIR/${id}_mri_hires.nii.gz
 
   # Manual registration of mold and affine MRI
+  MRI_WORK_DIR=$ROOT/work/${id}/mri
   MANUAL_DIR=$ROOT/manual/$id
-  HIRES_TO_MOLD_AFFINE=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_to_mold_affine.mat
+
+  # Optional manual registration between high-resolution MRI and mold MRI
+  HIRES_TO_MOLD_MANUAL_AFFINE=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_to_mold_affine.mat
+
+  # Either a copy of the above, or a registration obtained by matching moments
+  HIRES_TO_MOLD_AFFINE=$MRI_WORK_DIR/${id}_mri_hires_to_mold_affine.mat
 
   # The mask for the high-resolution MRI
   HIRES_MRI_REGMASK_MANUAL=$MANUAL_DIR/hires_to_mold/${id}_mri_hires_mask.nii.gz
 
   # Registration between low-res and high-res MRI
-  MRI_WORK_DIR=$ROOT/work/${id}/mri
   MOLD_BINARY=$MRI_WORK_DIR/slitmold_std.nii.gz
   MOLD_RIGID_MAT=$MRI_WORK_DIR/holderrotation_std.mat
   MOLD_NATIVE_TO_STD_MAT=$MRI_WORK_DIR/mold_native_to_std.mat
@@ -147,10 +152,19 @@ function set_specimen_vars()
   RESLICE_MOLD_TO_HIRES=$MRI_WORK_DIR/${id}_mri_mold_reslice_to_hires.nii.gz
   RESLICE_HIRES_TO_MOLD=$MRI_WORK_DIR/${id}_mri_hires_reslice_to_mold.nii.gz
 
+  # A file with coordinates of slice mask centroids and slice areas, for matching
+  # to the blockface along z-axis
+  MOLD_MRI_MASK_MOLDSPC_SLICE_STATS=$MRI_WORK_DIR/${id}_mold_mri_mask_moldspc_slice_stats.csv
+
   # Workspaces for mold-blockface preregistration
   MOLD_WORKSPACE_DIR=$MANUAL_DIR/bf_to_mold
   MOLD_WORKSPACE_SRC=$MANUAL_DIR/bf_to_mold/${id}_mri_bf_to_mold_input.itksnap
   MOLD_WORKSPACE_RES=$MANUAL_DIR/bf_to_mold/${id}_mri_bf_to_mold_result.itksnap
+
+  # Workspaces for mold-blockface preregistration (BFDC version)
+  MOLD_WORKSPACE_BFDC_DIR=$MANUAL_DIR/bfdc_to_mold
+  MOLD_WORKSPACE_BFDC_SRC=$MOLD_WORKSPACE_BFDC_DIR/${id}_mri_bfdc_to_mold_input.itksnap
+  MOLD_WORKSPACE_BFDC_RES=$MOLD_WORKSPACE_BFDC_DIR/${id}_mri_bfdc_to_mold_result.itksnap
 
   # Rotation of the holder around z axis to have the right orientation for viewingw
   MOLD_REORIENT_VIS=$MRI_WORK_DIR/${id}_mold_vis.mat
@@ -274,6 +288,40 @@ function set_block_vars()
 
   # Global blockface training file
   BF_GLOBAL_RFTRAIN=$ROOT/manual/common/blockface_rf.dat
+
+  # ======= NEW BLOCKFACE STUFF =======
+
+  # Search pattern for input files
+  BFDC_INPUT_GLOB="$ROOT/input/${id}/bf_proc/${id}_${block}_??_??/preproc/${id}_${block}_??_??_deepcluster.nii.gz"
+
+  # Root work directory
+  BFDC_WORK_DIR="$ROOT/work/${id}/bfdc/${block}"
+
+  # Slice volume/area statistics file
+  BFDC_SLICE_AREA_STATS="$BFDC_WORK_DIR"/${id}_${block}_bfdc_volstat.csv
+
+  # Directory for the stack_greedy registration
+  BFDC_RECON_DIR="$BFDC_WORK_DIR/recon"
+
+  # Input and splat manifests
+  BFDC_RECON_MANIFEST="$BFDC_WORK_DIR/recon_manifest.txt"
+  BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST="$BFDC_WORK_DIR/splat_rf_mrilike_manifest.txt"
+  BFDC_RECON_SPLAT_RF_MASK_MANIFEST="$BFDC_WORK_DIR/splat_rf_mask_manifest.txt"
+
+  # Initial splat before MRI registration
+  BFDC_SPLAT_INIT_RGB="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_init_rgb.nii.gz"
+  BFDC_SPLAT_INIT_RF_MRILIKE="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_init_rf_mrilike.nii.gz"
+  BFDC_SPLAT_INIT_RF_MASK="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_init_rf_mask.nii.gz"
+
+  # Initial matrix that brings blockface volume into the MRI mold space
+  BFDC_SPLAT_TO_MRI_MOLDSPC_INITIAL_RIGID="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_to_mri_moldspc_init_rigid.mat"
+
+  # Random forest classifiers (RGB+first 7 features, RGB+second 7 features, RGB+last 6 features),
+  # doing this weirdness because of c3d random forest bug with >10 components
+  BFDC_RF_CLASSIFIERS=(
+    "$ROOT/manual/common/bfdc_train/bfdc_rf_first10.dat"
+    "$ROOT/manual/common/bfdc_train/bfdc_rf_second10.dat"
+    "$ROOT/manual/common/bfdc_train/bfdc_rf_third10.dat" )
 
   # Global deepcluster files
   GLOBAL_NISSL_DEEPCLUSTER_RF_1=$ROOT/manual/common/deepcluster_1.rf
@@ -483,6 +531,34 @@ function set_block_density_vars()
 
 
   # Splatted images from which densities are derived
+
+  # Restore trace state
+  set +vx; eval $tracestate
+}
+
+# Variables for a specific blockface image
+function set_blockface_slide_vars()
+{
+  # Don't trace inside of set functions
+  local tracestate=$(shopt -po xtrace); set +x
+
+  # Read inputs
+  local id block slidename
+  read -r id block slidename args <<< "$@"
+
+  # Set block-level vars
+  set_block_vars $id $block
+
+  # The deepcluster files (from GCP)
+  BFDC_SLIDE_DEEPCLUSTER="$ROOT/input/${id}/bf_proc/$slidename/preproc/${slidename}_deepcluster.nii.gz"
+  BFDC_SLIDE_DEEPCLUSTER_RGB="$ROOT/input/${id}/bf_proc/$slidename/preproc/${slidename}_deepcluster_rgb.nii.gz"
+
+  # The mask and random forest based MRI-like image
+  BFDC_SLIDE_WORK_DIR="$BFDC_WORK_DIR/slides/${slidename}"
+  BFDC_SLIDE_RGB="$BFDC_SLIDE_WORK_DIR/${slidename}_bfdc_rgb.nii.gz"
+  BFDC_SLIDE_RF_POSTERIORS="$BFDC_SLIDE_WORK_DIR/${slidename}_bfdc_rf_posteriors.nii.gz"
+  BFDC_SLIDE_RF_MASK="$BFDC_SLIDE_WORK_DIR/${slidename}_bfdc_rf_mask.nii.gz"
+  BFDC_SLIDE_RF_MRILIKE="$BFDC_SLIDE_WORK_DIR/${slidename}_bfdc_rf_mrilike.nii.gz"
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -947,6 +1023,152 @@ function recon_blockface()
     -omc $BF_RECON_NII
 }
 
+# Blockface reconstruction based on DeepCluster feature maps
+function recon_blockface_dc
+{
+  # Read the ID and block
+  local id block slidename
+  read -r id block <<< "$@"
+
+  # Set block variables
+  set_block_vars $id $block
+
+  # Clear the manifest file
+  mkdir -p "$BFDC_RECON_DIR"
+  rm -rf "$BFDC_RECON_MANIFEST" "$BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST" "$BFDC_RECON_SPLAT_RF_MASK_MANIFEST"
+  rm -rf "$BFDC_SLICE_AREA_STATS"
+
+  # Apply classifier to all deepcluster slides to create a binary mask and
+  # a fake MRI image
+  for fn in $BFDC_INPUT_GLOB; do
+
+    # Get the ID of this blockface image
+    slidename=$(basename "$fn" _deepcluster.nii.gz)
+
+    # Load the settings for this image
+    set_blockface_slide_vars $id $block $slidename
+
+    # Create work dir
+    mkdir -p "$BFDC_SLIDE_WORK_DIR"
+
+    # Adjust the spacing of the blockface images to something reasonable
+    # We are using a fixed value of 0.0825 here but may need to be adjusted to use a
+    # manifest file instead.
+    local HEADER_CMD="-foreach -spacing 0.33x0.33x0.05mm -origin-voxel 50% -endfor"
+
+    # Save an RGB image with adjusted header
+    c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" $HEADER_CMD \
+      -omc "$BFDC_SLIDE_RGB"
+
+    # Run the random forest code
+    c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" "$BFDC_SLIDE_DEEPCLUSTER" \
+      -pick 0 1 2 3 4 5 6 7 8 9 $HEADER_CMD \
+      -rf-apply "${BFDC_RF_CLASSIFIERS[0]}" -omc "$TMPDIR/${slidename}_rfprob_0.nii.gz"
+
+    c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" "$BFDC_SLIDE_DEEPCLUSTER" \
+      -pick 0 1 2 10 11 12 13 14 15 16 $HEADER_CMD \
+      -rf-apply "${BFDC_RF_CLASSIFIERS[1]}" -omc "$TMPDIR/${slidename}_rfprob_1.nii.gz"
+
+    c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" "$BFDC_SLIDE_DEEPCLUSTER" \
+      -pick 0 1 2 17 18 19 20 21 22 $HEADER_CMD \
+      -rf-apply "${BFDC_RF_CLASSIFIERS[2]}" -omc "$TMPDIR/${slidename}_rfprob_2.nii.gz"
+
+    # Combine the probability maps and generate mri-like images, as well as mask
+    c2d -mcs \
+      "$TMPDIR/${slidename}_rfprob_0.nii.gz" \
+      "$TMPDIR/${slidename}_rfprob_1.nii.gz" \
+      "$TMPDIR/${slidename}_rfprob_2.nii.gz" \
+      -foreach -dup -times -endfor \
+      -foreach-comp 3 -add -add -sqrt -endfor \
+      -omc "$BFDC_SLIDE_RF_POSTERIORS" \
+      -popas B -popas W -popas G \
+      -push G -push W -push B -wsum 200 100 0 -type short -o "$BFDC_SLIDE_RF_MRILIKE"
+
+    # Generate a mask and also compute some geometric stats
+    local STAT="$TMPDIR/${slidename}_stat.txt"
+    c2d -mcs "$BFDC_SLIDE_RF_POSTERIORS" \
+      -wsum 1 1 1 -thresh 0.01 inf 1 0 -popas M \
+      "$BFDC_SLIDE_RF_POSTERIORS" \
+      -wsum 1 1 -1 -thresh 0 inf 1 0 \
+      -push M -times -type uchar -o "$BFDC_SLIDE_RF_MASK" \
+      -centroid -voxel-sum \
+      -dilate 0 3x3 -as A -dilate 1 3x3 -push A -scale -1 -add -voxel-sum \
+      | tail -n 3 > "$STAT"
+
+    # Assign a z-position to this slice. Each slice has name in the form ${id}_${block}_NN_MM
+    # where NN is the section and MM is the slice, and we use this to figure out the z position
+    # Note: we are hard-coding the spacing of slides here
+    local ZPOS
+    if [[ $block =~ .*a$ ]]; then
+      ZPOS=$(echo $slidename | awk -F_ '{print $3*0.5+$4*0.05}')
+    else
+      ZPOS=$(echo $slidename | awk -F_ '{print -$3*0.5-$4*0.05}')
+    fi
+
+    # Write out the area of tissue on the slice and perimeter area
+    local cx cy area perim
+    cx=$(head -n 1 "$STAT" | sed -e "s/.*\[//" -e "s/\].*//" -e "s/,/ /g" | awk '{print $1}')
+    cy=$(head -n 1 "$STAT" | sed -e "s/.*\[//" -e "s/\].*//" -e "s/,/ /g" | awk '{print $2}')
+    area=$(tail -n 2 "$STAT" | head -n 1 | awk '{print $3}')
+    perim=$(tail -n 1 "$STAT" | awk '{print $3}')
+    echo "$id,$block,$slidename,$cx,$cy,$ZPOS,$area,$perim" >> "$BFDC_SLICE_AREA_STATS"
+
+    # Write manifest lines
+    echo $slidename $ZPOS 1 "$BFDC_SLIDE_RGB" "$BFDC_SLIDE_RF_MASK" >> "$BFDC_RECON_MANIFEST"
+    echo $slidename "$BFDC_SLIDE_RF_MRILIKE" >> "$BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST"
+    echo $slidename "$BFDC_SLIDE_RF_MASK" >> "$BFDC_RECON_SPLAT_RF_MASK_MANIFEST"
+
+  done
+
+  # Initialize the stack_greedy repo
+  stack_greedy init -gm -M "$BFDC_RECON_MANIFEST" "$BFDC_RECON_DIR"
+
+  # Perform initial MRI-free reconstruction
+  stack_greedy recon -z 1.6 4 0.1 \
+     -m NCC 4x4 -n 100x40x0 "$BFDC_RECON_DIR"
+
+  # Get the range of z values
+  local Z0 Z1
+  Z0=$(cat "$BFDC_RECON_MANIFEST" | awk '{print $2}' | sort -n | head -n 1)
+  Z1=$(cat "$BFDC_RECON_MANIFEST" | awk '{print $2}' | sort -n | tail -n 1)
+
+  # Perform splatting using initial reconstruction
+  stack_greedy splat \
+    -i recon -S exact -z $Z0 0.5 $Z1 \
+    -o "$BFDC_SPLAT_INIT_RGB" "$BFDC_RECON_DIR"
+
+  stack_greedy splat \
+    -i recon -S exact -z $Z0 0.5 $Z1 \
+    -M "$BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST" \
+    -o "$BFDC_SPLAT_INIT_RF_MRILIKE" "$BFDC_RECON_DIR"
+
+  stack_greedy splat \
+    -i recon -S exact -z $Z0 0.5 $Z1 \
+    -M "$BFDC_RECON_SPLAT_RF_MASK_MANIFEST" \
+    -o "$BFDC_SPLAT_INIT_RF_MASK" "$BFDC_RECON_DIR"
+}
+
+function recon_blockface_dc_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      for block in $blocks; do
+        # Submit the jobs
+        pybatch -N "recon_bfdc_${id}_${block}" -m 8G \
+          "$0" recon_blockface_dc $id $block
+      done
+    fi
+  done < "$MDIR/blockface_src.txt"
+
+  # Wait for completion
+  pybatch -w "recon_bfdc_*"
+}
+
+
 function pybatch()
 {
   export TAU_ATLAS_ROOT=$ROOT
@@ -983,6 +1205,8 @@ function process_mri()
   # Make directories
   mkdir -p $MRI_WORK_DIR
 
+<<'SKIPTEST'
+
   # Stanardize the orientation of the molds
   c3d $MOLD_BINARY_NATIVE -orient $mold_orient -o $MOLD_BINARY
   c3d_affine_tool -sform $MOLD_BINARY -sform $MOLD_BINARY_NATIVE -inv -mult -inv \
@@ -1010,6 +1234,25 @@ function process_mri()
     c3d $HIRES_MRI -cmv -thresh -inf inf 1 0 -o $HIRES_MRI_REGMASK
   fi
 
+  # If no manual registration is supplied, generate it automatically
+  if [[ -f "$HIRES_TO_MOLD_MANUAL_AFFINE" ]]; then
+    cp -av "$HIRES_TO_MOLD_MANUAL_AFFINE" "$HIRES_TO_MOLD_AFFINE"
+  else
+
+    # Perform registration by moments
+    greedy -d 3 -moments 2 -i "$HIRES_MRI" "$MOLD_MRI_N4" \
+      -o "$TMPDIR/${id}_moments.mat" -m NCC 8x8x8
+
+    # Perform iterative affine registration
+    greedy -d 3 -a -i "$HIRES_MRI" "$MOLD_MRI_N4" \
+      -ia "$TMPDIR/${id}_moments.mat" \
+      -o "$TMPDIR/${id}_affine.mat" -m NCC 8x8x8 -n 100x100x0x0 \
+      -gm "$HIRES_MRI_REGMASK"
+
+    # Store inverse
+    c3d_affine_tool "$TMPDIR/${id}_affine.mat" -inv -o "$HIRES_TO_MOLD_AFFINE"
+  fi
+
   # Registration with high-resolution image as fixed, low-resolution as moving, lots of smoothness
   greedy -d 3 -i $HIRES_MRI $MOLD_MRI_N4 -it $HIRES_TO_MOLD_AFFINE,-1 \
     -o $MOLD_TO_HIRES_WARP -oroot $MOLD_TO_HIRES_ROOT_WARP \
@@ -1032,6 +1275,24 @@ function process_mri()
     -laa $MOLD_TO_HIRES_WARP -psn "Warp" \
     -o $MOLD_TO_HIRES_WORKSPACE
 
+SKIPTEST
+
+  # Generate a CSV of mask slice statistics, for blockface z-matching
+  c3d "$MOLD_MRI_MASK_MOLDSPC" \
+    -slice y 0:-1 -foreach \
+    -centroid -voxel-sum \
+    -dilate 0 3x3x0 -as B -dilate 1 3x3x0 -push B -scale -1 -add -voxel-sum \
+    -endfor \
+    > "$TMPDIR/${id}_mstat.txt"
+
+  grep -v CENTROID_VOX "$TMPDIR/${id}_mstat.txt" \
+    | awk 'NR%3==1 {x=$0} NR%3==2 {y=$0} NR%3==0 {print x,y,$0}' \
+    | grep -v nan \
+    | sed -e "s/CENTROID_MM .//" -e "s/ Voxel Sum: /,/g" \
+          -e "s/\]//g" -e "s/ //g" -e "s/^/${id},/" \
+    > "$MOLD_MRI_MASK_MOLDSPC_SLICE_STATS"
+
+<<'MOVE_TO_BLOCKFACE'
   # Also create a workspace for the mold - to help match up blockface slices
   mkdir -p $MOLD_WORKSPACE_DIR
   itksnap-wt \
@@ -1058,6 +1319,9 @@ function process_mri()
     -i $MOLD_WORKSPACE_SRC \
     -laa $MOLD_MRI_N4 -psn "Best Viewport" -ta "Viewport" -props-set-transform $MOLD_RIGID_MAT \
     -o $MOLD_WORKSPACE_SRC
+
+MOVE_TO_BLOCKFACE
+
 }
 
 function process_mri_all()
@@ -1078,7 +1342,96 @@ function process_mri_all()
   pybatch -w "mri_reg_*"
 }
 
+# Initial heuristic matching of blockface images to MRI images
+function match_blockface_to_mri_initial
+{
+  local id block blocks dummy args
+  read -r id args <<< "$@"
 
+  set_specimen_vars $id
+  mkdir -p "$SPECIMEN_QCDIR"
+
+  # Get all blocks for this specimen
+  read -r dummy blocks <<< "$(grep ^${id} $MDIR/blockface_src.txt)"
+<<'SKIII'
+  # Combine the block-level CSVs into one
+  local BFSTAT="$TMPDIR/${id}_bfstat_all.csv"
+  rm -rf "$BFSTAT"
+  for block in $blocks; do
+    set_block_vars $id $block
+    cat "$BFDC_SLICE_AREA_STATS" >> "$BFSTAT"
+  done
+
+  # Run the R script to generate the z-transforms
+  Rscript "$ROOT/scripts/blockface_z_match.R" \
+    -M "$MOLD_MRI_MASK_MOLDSPC_SLICE_STATS" -B "$BFSTAT" -f \
+    -o "$TMPDIR/zmat_%s.mat" -P "$SPECIMEN_QCDIR/${id}_mri_blockface_zmatch_plot_%02d.pdf"
+
+  # Run 2D registration to generate the 2D matrices
+  for block in $blocks; do
+
+    set_block_vars $id $block
+
+    # Create 2D multi-slice images
+    local MULTISLICE_MRI_MASK="$TMPDIR/${id}_${block}_multislice_mrmsk.nii.gz"
+    local MULTISLICE_BF_MASK="$TMPDIR/${id}_${block}_multislice_bfmsk.nii.gz"
+    local ROTATION_2D="$TMPDIR/${id}_${block}_multislice_rot2d.mat"
+    local ROTATION_3D="$TMPDIR/${id}_${block}_multislice_rot3d.mat"
+
+    c3d "$MOLD_MRI_MASK_MOLDSPC" -as R "$BFDC_SPLAT_INIT_RF_MASK" \
+      -reslice-matrix "$TMPDIR/zmat_${block}.mat" -trim 5x5x0vox -as T \
+      -slice y 0:5:-1 -omc "$MULTISLICE_BF_MASK" -clear \
+      -push T -push R -reslice-identity -slice y 0:5:-1 \
+      -omc "$MULTISLICE_MRI_MASK"
+
+    # Perform registration on multi-slice images
+    greedy -d 2 -i "$MULTISLICE_MRI_MASK" "$MULTISLICE_BF_MASK" \
+      -a -dof 6 -ia-identity -search 2000 flip 4 -n 100x100x40 -m NCC 4x4 \
+      -o "$ROTATION_2D"
+
+    # Make it a 3D rotation
+    cat "$ROTATION_2D" | awk '\
+      NR==1 { a11=$1; a12=$2; b1=$3 } \
+      NR==2 { a21=$1; a22=$2; b2=$3 } \
+      END { printf "%f %f 0 %f \n %f %f 0 %f \n 0 0 1 0\n 0 0 0 1 \n", \
+              a11, a12, b1, a21, a22, b2 }' \
+              > "$ROTATION_3D"
+
+    # Compose the transformations into a single one
+    c3d_affine_tool "$TMPDIR/zmat_${block}.mat" "$ROTATION_3D" -mult \
+      -o "$BFDC_SPLAT_TO_MRI_MOLDSPC_INITIAL_RIGID"
+
+  done
+
+SKIII
+
+  # Also create a workspace for the mold - to help match up blockface slices
+  mkdir -p "$MOLD_WORKSPACE_BFDC_DIR"
+  itksnap-wt \
+    -lsm "$MOLD_BINARY" -psn "Mold Binary" \
+    -laa "$MOLD_MRI_N4" -psn "Mold MRI" -props-set-transform "$MOLD_RIGID_MAT" \
+    -las "$MOLD_MRI_MASK_MOLDSPC" \
+    -o "$MOLD_WORKSPACE_BFDC_SRC"
+
+  # Add each of the blocks to it
+  for block in $blocks; do
+
+    set_block_vars $id $block
+
+    itksnap-wt \
+      -i "$MOLD_WORKSPACE_BFDC_SRC" \
+      -laa "$BFDC_SPLAT_INIT_RF_MRILIKE" -psn "${block}" -ta "${block}" \
+      -props-set-transform "$BFDC_SPLAT_TO_MRI_MOLDSPC_INITIAL_RIGID" \
+      -o "$MOLD_WORKSPACE_BFDC_SRC"
+
+  done
+
+  # Add a layer for retrieving optimal viewing orientation
+  itksnap-wt \
+    -i "$MOLD_WORKSPACE_BFDC_SRC" \
+    -laa "$MOLD_MRI_N4" -psn "Best Viewport" -ta "Viewport" -props-set-transform "$MOLD_RIGID_MAT" \
+    -o "$MOLD_WORKSPACE_BFDC_SRC"
+}
 
 function register_blockface()
 {
