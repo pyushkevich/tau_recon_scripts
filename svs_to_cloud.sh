@@ -166,7 +166,7 @@ function preprocess_specimen_slides()
 
   # Get a full directory dump
   FREMOTE=$(mktemp /tmp/preproc-remote-list.XXXXXX)
-  gsutil ls "gs://mtl_histology/$id/histo_proc/**" > $FREMOTE
+  gsutil ls "gs://mtl_histology/$id/histo_proc/**" > $FREMOTE || touch $FREMOTE
 
   # Check for existence of all remote files
   for svs in $SVSLIST; do
@@ -182,7 +182,7 @@ function preprocess_specimen_slides()
       fi
     done
 
-    if [[ $must_run ]]; then
+    if [[ $must_run -gt 0 ]]; then
 
       # Get a job ID
       JOB=$(echo $id $svs | md5sum | cut -c 1-6)

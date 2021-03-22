@@ -305,6 +305,7 @@ function set_block_vars()
 
   # Input and splat manifests
   BFDC_RECON_MANIFEST="$BFDC_WORK_DIR/recon_manifest.txt"
+  BFDC_RECON_SPLAT_FEATURES_MANIFEST="$BFDC_WORK_DIR/splat_features_manifest.txt"
   BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST="$BFDC_WORK_DIR/splat_rf_mrilike_manifest.txt"
   BFDC_RECON_SPLAT_RF_MASK_MANIFEST="$BFDC_WORK_DIR/splat_rf_mask_manifest.txt"
 
@@ -345,6 +346,7 @@ function set_block_vars()
   BFVIS_RGB=$BF_REG_DIR/${id}_${block}_bfvis_blockface.nii.gz
 
   # Derived images in BFVIS space
+  BFVIS_INIT_MRILIKE=$BF_REG_DIR/${id}_${block}_bfvis_init_mrilike.nii.gz
   BFVIS_MRILIKE=$BF_REG_DIR/${id}_${block}_bfvis_mrilike.nii.gz
   BFVIS_ICEMASK=$BF_REG_DIR/${id}_${block}_bfvis_icemask.nii.gz
   BFVIS_REGMASK=$BF_REG_DIR/${id}_${block}_bfvis_regmask.nii.gz
@@ -367,6 +369,8 @@ function set_block_vars()
 
   # The registration between the intermediate above and the blockface
   BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE=$BF_REG_DIR/${id}_${block}_hires_mri_intermediate_to_bfvis_affine.mat
+  BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_WARP=$BF_REG_DIR/${id}_${block}_hires_mri_intermediate_to_bfvis_warp.nii.gz
+  BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_INVWARP=$BF_REG_DIR/${id}_${block}_hires_mri_intermediate_to_bfvis_invwarp.nii.gz
 
   # Complete affine that takes 7T MRI into BFVIS (and inverse)
   MRI_TO_BFVIS_AFFINE_FULL=$BF_REG_DIR/${id}_${block}_mri_to_bfvis_affine_full.mat
@@ -387,7 +391,8 @@ function set_block_vars()
 
   # Sequence of transforms to take high-resolution MRI to BF reference space
   HIRES_TO_BFVIS_AFFINE_FULL="$MRI_TO_BFVIS_AFFINE_FULL $HIRES_TO_MOLD_AFFINE"
-  HIRES_TO_BFVIS_WARP_FULL="$HIRES_TO_BFVIS_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
+  # HIRES_TO_BFVIS_WARP_FULL="$HIRES_TO_BFVIS_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
+  HIRES_TO_BFVIS_WARP_FULL="$BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_WARP $HIRES_TO_BFVIS_AFFINE_FULL $MOLD_TO_HIRES_INV_WARP"
 
   # Inverse of the above transforms
   #BFVIS_TO_MRI_AFFINE_FULL="$MOLD_RIGID_MAT,-1 \
@@ -396,7 +401,8 @@ function set_block_vars()
   #                       $BFVIS_TO_MRI_AFFINE"
 
   BFVIS_TO_HIRES_AFFINE_FULL="$HIRES_TO_MOLD_AFFINE,-1 $BFVIS_TO_MRI_AFFINE_FULL"
-  BFVIS_TO_HIRES_FULL="$MOLD_TO_HIRES_WARP $BFVIS_TO_HIRES_AFFINE_FULL"
+  # BFVIS_TO_HIRES_FULL="$MOLD_TO_HIRES_WARP $BFVIS_TO_HIRES_AFFINE_FULL"
+  BFVIS_TO_HIRES_FULL="$MOLD_TO_HIRES_WARP $BFVIS_TO_HIRES_AFFINE_FULL $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_INVWARP"
 
   # Workspace of MRI in BF space
   MRI_TO_BFVIS_WORKSPACE=$BF_REG_DIR/${id}_${block}_mri_to_bfvis.itksnap
@@ -1035,7 +1041,8 @@ function recon_blockface_dc
 
   # Clear the manifest file
   mkdir -p "$BFDC_RECON_DIR"
-  rm -rf "$BFDC_RECON_MANIFEST" "$BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST" "$BFDC_RECON_SPLAT_RF_MASK_MANIFEST"
+  rm -rf "$BFDC_RECON_MANIFEST" "$BFDC_RECON_SPLAT_FEATURES_MANIFEST"
+  rm -rf "$BFDC_RECON_SPLAT_RF_MASK_MANIFEST" "$BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST"
   rm -rf "$BFDC_SLICE_AREA_STATS"
 
   # Apply classifier to all deepcluster slides to create a binary mask and
@@ -1117,6 +1124,7 @@ function recon_blockface_dc
     echo $slidename $ZPOS 1 "$BFDC_SLIDE_RGB" "$BFDC_SLIDE_RF_MASK" >> "$BFDC_RECON_MANIFEST"
     echo $slidename "$BFDC_SLIDE_RF_MRILIKE" >> "$BFDC_RECON_SPLAT_RF_MRILIKE_MANIFEST"
     echo $slidename "$BFDC_SLIDE_RF_MASK" >> "$BFDC_RECON_SPLAT_RF_MASK_MANIFEST"
+    echo $slidename "$BFDC_SLIDE_DEEPCLUSTER" >> "$BFDC_RECON_SPLAT_FEATURES_MANIFEST"
 
   done
 
@@ -1205,8 +1213,6 @@ function process_mri()
   # Make directories
   mkdir -p $MRI_WORK_DIR
 
-<<'SKIPTEST'
-
   # Stanardize the orientation of the molds
   c3d $MOLD_BINARY_NATIVE -orient $mold_orient -o $MOLD_BINARY
   c3d_affine_tool -sform $MOLD_BINARY -sform $MOLD_BINARY_NATIVE -inv -mult -inv \
@@ -1236,17 +1242,26 @@ function process_mri()
 
   # If no manual registration is supplied, generate it automatically
   if [[ -f "$HIRES_TO_MOLD_MANUAL_AFFINE" ]]; then
-    cp -av "$HIRES_TO_MOLD_MANUAL_AFFINE" "$HIRES_TO_MOLD_AFFINE"
+
+    # Perform iterative affine registration
+    greedy -d 3 -a -i "$HIRES_MRI" "$MOLD_MRI_N4" \
+      -ia "$TMPDIR/${id}_moments.mat" -ia  "$HIRES_TO_MOLD_MANUAL_AFFINE,-1" \
+      -o "$TMPDIR/${id}_affine.mat" -m WNCC 8x8x8 -n 100x100x0x0 \
+      -gm "$HIRES_MRI_REGMASK"
+
+    # Store inverse
+    c3d_affine_tool "$TMPDIR/${id}_affine.mat" -inv -o "$HIRES_TO_MOLD_AFFINE"
+
   else
 
     # Perform registration by moments
     greedy -d 3 -moments 2 -i "$HIRES_MRI" "$MOLD_MRI_N4" \
-      -o "$TMPDIR/${id}_moments.mat" -m NCC 8x8x8
+      -o "$TMPDIR/${id}_moments.mat" -m WNCC 8x8x8
 
     # Perform iterative affine registration
     greedy -d 3 -a -i "$HIRES_MRI" "$MOLD_MRI_N4" \
-      -ia "$TMPDIR/${id}_moments.mat" \
-      -o "$TMPDIR/${id}_affine.mat" -m NCC 8x8x8 -n 100x100x0x0 \
+      -ia "$TMPDIR/${id}_moments.mat" -search 4000 flip 10 \
+      -o "$TMPDIR/${id}_affine.mat" -m WNCC 8x8x8 -n 100x100x0x0 \
       -gm "$HIRES_MRI_REGMASK"
 
     # Store inverse
@@ -1274,8 +1289,6 @@ function process_mri()
     -laa $RESLICE_MOLD_TO_HIRES -psn "MOLD_MRI_warped" -props-set-contrast AUTO \
     -laa $MOLD_TO_HIRES_WARP -psn "Warp" \
     -o $MOLD_TO_HIRES_WORKSPACE
-
-SKIPTEST
 
   # Generate a CSV of mask slice statistics, for blockface z-matching
   c3d "$MOLD_MRI_MASK_MOLDSPC" \
@@ -1353,7 +1366,7 @@ function match_blockface_to_mri_initial
 
   # Get all blocks for this specimen
   read -r dummy blocks <<< "$(grep ^${id} $MDIR/blockface_src.txt)"
-<<'SKIII'
+
   # Combine the block-level CSVs into one
   local BFSTAT="$TMPDIR/${id}_bfstat_all.csv"
   rm -rf "$BFSTAT"
@@ -1386,7 +1399,7 @@ function match_blockface_to_mri_initial
 
     # Perform registration on multi-slice images
     greedy -d 2 -i "$MULTISLICE_MRI_MASK" "$MULTISLICE_BF_MASK" \
-      -a -dof 6 -ia-identity -search 2000 flip 4 -n 100x100x40 -m NCC 4x4 \
+      -a -dof 6 -ia-identity -search 2000 flip 4 -n 100x100x40 -m WNCC 4x4 \
       -o "$ROTATION_2D"
 
     # Make it a 3D rotation
@@ -1402,8 +1415,6 @@ function match_blockface_to_mri_initial
       -o "$BFDC_SPLAT_TO_MRI_MOLDSPC_INITIAL_RIGID"
 
   done
-
-SKIII
 
   # Also create a workspace for the mold - to help match up blockface slices
   mkdir -p "$MOLD_WORKSPACE_BFDC_DIR"
@@ -1431,6 +1442,23 @@ SKIII
     -i "$MOLD_WORKSPACE_BFDC_SRC" \
     -laa "$MOLD_MRI_N4" -psn "Best Viewport" -ta "Viewport" -props-set-transform "$MOLD_RIGID_MAT" \
     -o "$MOLD_WORKSPACE_BFDC_SRC"
+}
+
+function match_blockface_to_mri_initial_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      # Submit the jobs
+      pybatch -N "mri_bf_init_${id}"  -m 8G \
+        $0 match_blockface_to_mri_initial $id
+  fi
+  done < "$MDIR/blockface_src.txt"
+
+  # Wait for completion
+  pybatch -w "mri_bf_init_*"
 }
 
 function register_blockface()
@@ -1526,11 +1554,11 @@ function register_blockface()
   # Perform the rigid, then affine registration
   greedy -d 3 -a -dof 6 -i $MRI_TO_BFVIS_INIT $BFVIS_MRILIKE \
     -gm $MRI_TO_BFVIS_INIT_MASK -o $BFVIS_TO_MRI_RIGID \
-    -m NCC 4x4x4 -n 60x40x0 -ia-identity
+    -m WNCC 4x4x4 -n 60x40x0 -ia-identity
 
   greedy -d 3 -a -dof 12 -i $MRI_TO_BFVIS_INIT $BFVIS_MRILIKE \
     -gm $MRI_TO_BFVIS_INIT_MASK -o $BFVIS_TO_MRI_AFFINE \
-    -m NCC 4x4x4 -n 60x40x0 -ia $BFVIS_TO_MRI_RIGID
+    -m WNCC 4x4x4 -n 60x40x0 -ia $BFVIS_TO_MRI_RIGID
 
   # Now that we have registered the blockface to the low-res MRI,
   # we perform a second registration between the high-resolution
@@ -1557,7 +1585,7 @@ function register_blockface()
   greedy -d 3 -a -dof 12 \
     -i $BFVIS_MRILIKE $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE \
     -gm $BFVIS_REGMASK -o $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE \
-    -m NCC 4x4x4 -n 60x40x0 -ia-identity
+    -m WNCC 4x4x4 -n 60x40x0 -ia-identity
 
   # Complete registration that takes 7T MRI into BFVIS (and inverse)
   c3d_affine_tool \
@@ -1650,6 +1678,262 @@ function register_blockface_all()
   # Wait for completion
   pybatch -w "reg_bf_*"
 }
+
+function register_bfdc_to_mri()
+{
+  # Read all the arguments
+  #  zpos: offset of the block in z (mm)
+  #  flip: 3-digit code (010 means flip y)
+  #  rot_init, dx_init, dy_init: initial in-plane transform
+  read -r id block args <<< "$@"
+
+  # Get the variables
+  set_block_vars $id $block
+
+  mkdir -p "$BF_REG_DIR"
+
+  # Make sure the manual workspace exists
+  if [[ ! -f $MOLD_WORKSPACE_BFDC_RES ]]; then
+    echo "Missing manual matching $MOLD_WORKSPACE_BFDC_RES"
+    exit 255
+  fi
+
+  # Extract the transformation that maps the blockface into the mold space
+  itksnap-wt -i "$MOLD_WORKSPACE_BFDC_RES" -lpt ${block} -props-get-transform \
+    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
+    > "$BF_TOMOLD_MANUAL_RIGID"
+
+  # Extract the 2D transformation that properly orients the mold for visualization
+  local VP_AFFINE=$TMPDIR/vp_affine.mat
+  itksnap-wt -i "$MOLD_WORKSPACE_BFDC_RES" -lpt Viewport -props-get-transform \
+    | awk '$1 == "3>" {print $2,$3,$4,$5}' \
+    > "$VP_AFFINE"
+
+  # Get the 3D transformation from block space into viewport space
+  local VP_FULL=$TMPDIR/vp_full.mat
+  c3d_affine_tool \
+    "$BF_TOMOLD_MANUAL_RIGID" \
+    "$MOLD_RIGID_MAT" -inv "$VP_AFFINE" -mult -mult \
+    -o "$VP_FULL"
+
+  # Obtain the center of the blockface image
+  local CX CY CZ
+  read -r CX CY CZ <<< "$(c3d "$BFDC_SPLAT_INIT_RF_MRILIKE" -probe 50% | awk '{print $5,$6,$7}')"
+
+  # Extract the 2D portion of the transformation and make it preserve the
+  # center of the blockface image
+  cat "$VP_FULL" | awk -v cx="$CX" -v cy="$CY" -v cz="$CZ" '\
+    NR==1 { print $1,$2,0,cx - $1*cx - $2*cy } \
+    NR==2 { print $1,$2,0,cy - $1*cx - $2*cy } \
+    NR==3 { print 0,0,1,0 } \
+    NR==4 { print 0,0,0,1 }' > "$BF_TO_BFVIS_RIGID"
+
+  # Generate a reference space for this block. It will have a visually pleasing
+  # orientation, fit tightly to the BF mask, and have the resolution of the BF. It
+  # will have z-spacing matching that of NISSL so that the reference image is not
+  # too huge in size.
+  c3d -verbose "$BFDC_SPLAT_INIT_RF_MASK" \
+    -thresh 0.5 inf 1 0 -dilate 0 3x3x3 -dilate 1 3x3x3 \
+    -comp -thresh 1 1 1 0 \
+    -pad 50%x50%x0 50%x50%x0 0 \
+    -resample 200x200x100% \
+    -dup -int 0 -reslice-matrix "$BF_TO_BFVIS_RIGID" \
+     -trim 2x2x0mm -o "$BFVIS_REFSPACE"
+
+  # Reslice the relevant images to this reference space
+  greedy -d 3 -rf "$BFVIS_REFSPACE" \
+    -rm "$BFDC_SPLAT_INIT_RF_MRILIKE" "$BFVIS_INIT_MRILIKE" \
+    -rm "$BFDC_SPLAT_INIT_RF_MASK" "$BFVIS_ICEMASK" \
+    -rb 255 -rm "$BFDC_SPLAT_INIT_RGB" "$BFVIS_RGB" \
+    -r "$BF_TO_BFVIS_RIGID"
+
+  # Reslice the mold MRI into the space of the blockface image
+  greedy -d 3 -rf "$BFVIS_INIT_MRILIKE" \
+    -rm "$MOLD_MRI_N4" "$MRI_TO_BFVIS_INIT" \
+    -ri LABEL 0.2vox -rm "$MOLD_MRI_MASK_NATIVESPC" "$MRI_TO_BFVIS_INIT_MASK" \
+    -r "$BF_TO_BFVIS_RIGID" "$BF_TOMOLD_MANUAL_RIGID,-1" "$MOLD_RIGID_MAT"
+
+  # Perform the rigid, then affine registration
+  greedy -d 3 -a -dof 6 -i "$MRI_TO_BFVIS_INIT" "$BFVIS_INIT_MRILIKE" \
+    -gm "$MRI_TO_BFVIS_INIT_MASK" -o "$BFVIS_TO_MRI_RIGID" \
+    -m WNCC 4x4x4 -n 60x40x0 -ia-identity
+
+  # TODO: this is a temporary silliness of doing rigid twice to avoid
+  # doing affine which can cause a lot of distortion. Overall why are we
+  # using MRI as fixed is unclear
+  greedy -d 3 -a -dof 6 -i "$MRI_TO_BFVIS_INIT" "$BFVIS_INIT_MRILIKE" \
+    -gm "$MRI_TO_BFVIS_INIT_MASK" -o "$BFVIS_TO_MRI_AFFINE" \
+    -m WNCC 4x4x4 -n 60x40x0 -ia "$BFVIS_TO_MRI_RIGID"
+
+  # Now that we have registered the blockface to the low-res MRI,
+  # we perform a second registration between the blockface as the
+  # fixed image and high-resolution MRI as the moving image.
+  ### c3d "$BFVIS_ICEMASK" -as X -thresh 0.5 inf 1 0 \
+  ###   -pad 0x0x5 0x0x5 0 -dilate 0 0x0x2 \
+  ###   -insert X 1 -reslice-identity -o "$BFVIS_REGMASK"
+
+  # Set up a temporary fixed space that is wider than the blockface image so
+  # that the extents of the resliced high-res MRI are not limited by the extents
+  # of the blockface image
+  c3d "$BFVIS_INIT_MRILIKE" -pad 0x0x10 0x0x10 0 -o "$TMPDIR/reslice_space.nii.gz"
+
+  # Reslice the high-res MRI into the BFVIS space using current transform.
+  # This is an insane number of transformations!
+  greedy -d 3 -rf "$TMPDIR/reslice_space.nii.gz" \
+    -rm $HIRES_MRI $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE \
+    -r $BFVIS_TO_MRI_AFFINE,-1 \
+       $BF_TO_BFVIS_RIGID \
+       $BF_TOMOLD_MANUAL_RIGID,-1 \
+       $MOLD_RIGID_MAT \
+       $HIRES_TO_MOLD_AFFINE \
+       $MOLD_TO_HIRES_INV_WARP
+
+  # Also reslice the high-res MRI into raw BFDC space
+  greedy -d 3 -rf "$BFDC_SPLAT_INIT_RF_MASK" \
+    -rm "$HIRES_MRI" "$TMPDIR/bfdc_fit_target.nii.gz" \
+    -r $BF_TO_BFVIS_RIGID,-1 \
+       $BFVIS_TO_MRI_AFFINE,-1 \
+       $BF_TO_BFVIS_RIGID \
+       $BF_TOMOLD_MANUAL_RIGID,-1 \
+       $MOLD_RIGID_MAT \
+       $HIRES_TO_MOLD_AFFINE \
+       $MOLD_TO_HIRES_INV_WARP
+
+
+  # Perform robust least square fitting to obtain a new MRI-like image that matches
+  # the high-resolution MRI
+
+  # Splat the DC 3D image in temporary directory
+  stack_greedy splat \
+    -i recon -S exact -rf "$BFDC_SPLAT_INIT_RF_MASK" \
+    -M "$BFDC_RECON_SPLAT_FEATURES_MANIFEST" \
+    -o "$TMPDIR/splat_dc.nii.gz" "$BFDC_RECON_DIR"
+
+  # Concatenate the RGB components
+  c3d -mcs "$BFDC_SPLAT_INIT_RGB" "$TMPDIR/splat_dc.nii.gz" -omc "$TMPDIR/splat_rgbdc.nii.gz"
+
+  # Perform multichannel fitting
+  Rscript "$ROOT/scripts/fit_multichannel.R" \
+    -i "$TMPDIR/splat_rgbdc.nii.gz" -t "$TMPDIR/bfdc_fit_target.nii.gz" -o "$TMPDIR/fitted.nii.gz"
+
+  # Resample the fitted image to the desired dimensions
+  greedy -d 3 -rf "$BFVIS_REFSPACE" \
+    -rm "$TMPDIR/fitted.nii.gz" "$BFVIS_MRILIKE" \
+    -r "$BF_TO_BFVIS_RIGID"
+
+  # Perform a second round of affine registration directly to the high-res MRI
+  # Inspection on Arp 24 2020 revealed a number of poor registrations particularly
+  # along the z-axis, and doing registration with the high-res image seemed
+  # to help. Since we are using the WNCC metric, there is no need to shrink the
+  # mask like in the earlier version of the code, and we use the ice mask
+  greedy -d 3 -a -dof 12 \
+    -i $BFVIS_MRILIKE $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE \
+    -gm $BFVIS_ICEMASK -o $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE \
+    -m WNCC 4x4x1 -n 100x40x40 -ia-identity
+
+  # And now perform a deformable registration too, also saving the inverse warp
+  ./bin/greedy -d 3 \
+    -i $BFVIS_MRILIKE $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE \
+    -gm $BFVIS_ICEMASK \
+    -it $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE \
+    -m WNCC 4x4x1 -n 100x40x40 -ref-pad 0x0x10 -bg NaN -s 3.0vox 0.5vox -sv \
+    -o $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_WARP \
+    -oinv $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_INVWARP
+
+  # Complete registration that takes 7T MRI into BFVIS (and inverse)
+  c3d_affine_tool \
+    $MOLD_RIGID_MAT \
+    $BF_TOMOLD_MANUAL_RIGID -inv -mult \
+    $BF_TO_BFVIS_RIGID -mult \
+    $BFVIS_TO_MRI_AFFINE -inv -mult \
+    $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_AFFINE -mult \
+    -o $MRI_TO_BFVIS_AFFINE_FULL \
+    -inv -o $BFVIS_TO_MRI_AFFINE_FULL
+
+  # Save a workspace with the registration result
+  #itksnap-wt \
+  #  -laa $MRI_TO_BFVIS_INIT -psn "MRI" -las $MRI_TO_BFVIS_INIT_MASK \
+  #  -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE_NOREG" \
+  #  -laa $BFVIS_MRILIKE -psn "BFVIS_MRILIKE" -props-set-transform $BFVIS_TO_MRI_AFFINE \
+  #  -laa $BFVIS_RGB -psn "BFVIS_RGB" -props-set-transform $BFVIS_TO_MRI_AFFINE -props-set-mcd RGB \
+  #  -o $BFVIS_TO_MRI_WORKSPACE
+
+  # Reslice the MRI into block space using the affine registration result
+  greedy -d 3 -rf $BFVIS_MRILIKE \
+    -rm $MOLD_MRI_N4 $MRI_TO_BFVIS_AFFINE \
+    -ri LABEL 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $MRI_TO_BFVIS_AFFINE_MASK \
+    -r $BFVIS_HIRES_MRI_INTERMEDIATE_TO_BF_WARP $MRI_TO_BFVIS_AFFINE_FULL
+
+  # For some reason Greedy is throwing up errors if I c
+  greedy -d 3 -rf $BFVIS_MRILIKE \
+    -rm $HIRES_MRI $HIRES_MRI_TO_BFVIS_WARPED \
+    -ri NN -rm $HIRES_MRI_REGMASK $HIRES_MRI_MASK_TO_BFVIS_WARPED \
+    -r $HIRES_TO_BFVIS_WARP_FULL
+
+  # If validation tracings exist in MRI space, map them to the blockface space
+  # for evaluation purposes.
+  if [[ -f $HIRES_MRI_MANUAL_TRACE ]]; then
+
+    # On slices that have segmentations, we want to fill the background of the
+    # slice with a different value, so that we can track borders better. We also
+    # fatten up the segmentations a few slices so that there are no missing pieces
+    # when matching histology
+    local HIRES_MRI_MANUAL_TRACE_PROC=$TMPDIR/trace_proc.nii.gz
+
+    c3d $HIRES_MRI_MANUAL_TRACE -dup \
+      -thresh 1 inf 1 0 -dilate 1 500x0x500 -as M \
+      -stretch 0 1 100 0 -add \
+      -split -foreach -sdt -scale -1 -endfor -scale 0 -shift -100 -merge \
+      -replace 100 0 -replace 0 6 \
+      -push M -dilate 1 0x5x0 -times \
+      -o $HIRES_MRI_MANUAL_TRACE_PROC
+
+    # Old code without fattening:
+    # c3d $HIRES_MRI_MANUAL_TRACE -as T \
+    #  -thresh 1 inf 1 0 -dilate 1 500x0x500 \
+    #  -push T -replace 0 6 -times \
+    #  -o $HIRES_MRI_MANUAL_TRACE_PROC
+
+    greedy -d 3 -rf $BFVIS_MRILIKE \
+      -ri LABEL 0.1mm \
+      -rm $HIRES_MRI_MANUAL_TRACE_PROC $HIRES_MRI_MANUAL_TRACE_TO_BFVIS_WARPED \
+      -r $HIRES_TO_BFVIS_WARP_FULL $HIRES_MRI_MANUAL_TRACE_AFFINE,-1
+
+  fi
+
+  # Create a workspace native to the blockface image
+  itksnap-wt \
+    -laa $BFVIS_RGB -psn "Blockface RGB" -props-set-mcd rgb \
+    -laa $BFVIS_MRILIKE -psn "Blockface MRI-like" \
+    -laa $MRI_TO_BFVIS_AFFINE -psn "Mold MRI" \
+    -las $MRI_TO_BFVIS_AFFINE_MASK -psn "Mold Mask" \
+    -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "Hires MRI (Final)" \
+    -laa $HIRES_MRI_TO_BFVIS_WARPED_INTERMEDIATE -psn "Hires MRI (Intermed)" \
+    -las $HIRES_MRI_MASK_TO_BFVIS_WARPED -psn "Hires Mask" \
+    -o $MRI_TO_BFVIS_WORKSPACE
+}
+
+
+function register_bfdc_to_mri_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      for block in $blocks; do
+        # Submit the jobs
+        pybatch -N "reg_bfdc_${id}_${block}" -m 8G \
+          "$0" register_bfdc_to_mri $id $block
+      done
+    fi
+  done < "$MDIR/blockface_src.txt"
+
+  # Wait for completion
+  pybatch -w "reg_bfdc_*"
+}
+
 
 # Uses curl to download a file
 function curl_download_url()
