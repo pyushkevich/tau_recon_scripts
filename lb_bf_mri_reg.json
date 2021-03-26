@@ -1,0 +1,30 @@
+{
+  "inputs": [
+    {
+      "name": "Blockface",
+      "display": "RGB"
+    },
+    {
+      "name": "MRI-like BF",
+      "display": "grayscale"
+    },
+    {
+      "name": "Hires MRI (affine)",
+      "display": "grayscale"
+    },
+    {
+      "name": "Hires MRI (warped)",
+      "display": "grayscale",
+      "edges": true
+    }
+  ],
+  "slicing": {
+    "axis" : "z",
+    "positions" : [ "25%", "50%", "75%" ]
+  },
+  "grid": {
+    "opacity": 0.5,
+    "color": "lightgreen",
+    "spacing": "10"
+  }
+}

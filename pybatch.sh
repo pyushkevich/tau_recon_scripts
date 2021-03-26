@@ -1,10 +1,28 @@
 #!/bin/bash
-set -x -e
+# set -x -e
 
 function usage()
 {
-  echo "pybatch : Paul's SGE/SLURM launcher"
+  echo "pybatch : Paul's SGE/SLURM/LSF launcher"
+  echo "Usage:"
+  echo "  pybatch.sh [options] <command> [args]"
+  echo "Options:"
+  echo "  -m <value>           : Set memory requirement for job (e.g., 8G)"
+  echo "  -n <number>          : Set CPU core requirement for job (e.g., 4)"
+  echo "  -N <string>          : Set name of the job"
+  echo "  -o <directory>       : Directory for stdout/stderr dump"
+  echo "  -w <pattern>         : Wait until jobs in wildcard pattern complete (e.g., 'my_job_*')"
+  echo "Environment variables:"
+  echo "  PYBATCH_SLURM_OPTS   : Additional flags to pass to SLURM"
+  echo "  PYBATCH_SGE_OPTS     : Additional flags to pass to SGE"
+  echo "  PYBATCH_LSF_OPTS     : Additional flags to pass to LSF"
 }
+
+# No parameters? Show usage
+if [[ "$#" -lt 1 ]]; then
+  usage
+  exit 255
+fi
 
 # Check if using SLURM
 if sbatch --version 1> /dev/null 2> /dev/null ; then

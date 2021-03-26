@@ -22,30 +22,114 @@ function kube()
   kubectl "$@"
 }
 
-# Get all the slide identifiers in the manifest file for a specimen
-function get_specimen_manifest_slides()
+# Uses curl to print a remote URL
+function curl_cat_url()
 {
+  local URL CURL_OPTS
+  read -r URL CURL_OPTS <<< "$@"
+
+  if [[ $CURL_SSH_HOST ]]; then
+    # SSH to a remote host before getting the web-based resource
+    # -n is critical here, otherwise stdin gets messed with and read does not work
+    ssh -n -q -o BatchMode=yes -o StrictHostKeyChecking=no $CURL_SSH_HOST \
+      curl -L -s -f --retry 4 "$CURL_OPTS" "$URL"
+  else
+    curl -L -s -f --retry 4 "$CURL_OPTS" "$URL"
+  fi
+}
+
+# Update the local copy of the histology manifest file for a single specimen/block
+function update_histo_match_manifest_for_block()
+{
+  local id block args url
+
   # What specimen and block are we doing this for?
-  read -r id stain args <<< "$@"
+  read -r id block args <<< "$@"
+
+  # The output filename
+  local HISTO_MATCH_MANIFEST_DIR=$ROOT/input/${id}/histo_manifest/
+  local HISTO_MATCH_MANIFEST=$HISTO_MATCH_MANIFEST_DIR/${id}_${block}_histo_manifest.txt
+  mkdir -p $HISTO_MATCH_MANIFEST_DIR
 
   # Match the id in the manifest
   url=$(cat $MDIR/histo_matching.txt | awk -v id=$id '$1 == id {print $2}')
   if [[ ! $url ]]; then
-    >&2 echo "Missing histology matching data in Google sheets"
+    echo "Missing histology matching data in Google sheets"
     return 255
   fi
 
+  # Load the manifest and parse for the block of interest, put into temp file
+  local TMPFILE_FULL=$TMPDIR/manifest_full_${id}_${block}.txt
+  local TMPFILE=$TMPDIR/manifest_${id}_${block}.txt
+
+  if ! curl_cat_url "$url" > "$TMPFILE_FULL"; then
+    echo "Unable to download $url"
+    return 255
+  fi
+
+  cat $TMPFILE_FULL | \
+    grep -v duplicate | \
+    grep -v exclude | \
+    grep -v multiple | \
+    awk -F, -v b=$block '$3==b {print $0}' \
+    > $TMPFILE
+
+  # Read all the slices for this block
+  rm -rf $HISTO_MATCH_MANIFEST
+  local svs stain dummy section slice args
+  while IFS=, read -r svs stain dummy section slice args; do
+
+    # Check for incomplete lines
+    if [[ ! $section || ! $stain || ! $svs ]]; then
+      echo "WARNING: incomplete line '$svs,$stain,$dummy,$section,$slice,$args' in Google sheet"
+      continue
+    fi
+
+    # If the slice number is not specified, fill in missing information and generate warning
+    if [[ ! $slice ]]; then
+      echo "WARNING: missing slice for $svs in histo matching Google sheet"
+      if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
+    fi
+
+    echo $svs,$stain,$dummy,$section,$slice >> $HISTO_MATCH_MANIFEST
+  done < $TMPFILE
+}
+
+# Update the local copy of the histology manifest files
+function update_histo_match_manifests()
+{
+  # Specimen regexp
+  REGEXP=$1
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      for block in $blocks; do
+
+        update_histo_match_manifest_for_block ${id} ${block}
+
+      done
+    fi
+  done < "$MDIR/blockface_src.txt"
+}
+
+# Get all the slide identifiers in the manifest file for a specimen
+function get_specimen_manifest_slides()
+{
+  # What specimen are we doing this for?
+  read -r id stain args <<< "$@"
+
+  # Directory with manifest files
+  local HISTO_MATCH_MANIFEST_DIR=$ROOT/input/${id}/histo_manifest/
+
   # Apply filters
-  local AWKCMD="NR > 1 {print \$1}"
+  local AWKCMD="{print \$1}"
   if [[ $stain ]]; then
-    AWKCMD="NR > 1 && \$2==\"${stain}\" {print \$1}"
+    AWKCMD="\$2==\"${stain}\" {print \$1}"
   fi
     
   # Read the relevant slides in the manifest
-  curl -Ls "$(echo $url | sed -e "s/\\\\//g")" 2>&1 | \
-    grep -v duplicate | \
-    grep -v multiple | \
-    awk -F, "$AWKCMD"
+  awk -F, "$AWKCMD" $HISTO_MATCH_MANIFEST_DIR/${id}_*_histo_manifest.txt || echo ""
 }
 
 # Simple script: go through all of the Google spreadsheets and for each one, 

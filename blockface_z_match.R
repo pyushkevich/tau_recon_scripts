@@ -18,8 +18,8 @@ option_list <- list(
    make_option(c("-P", "--plot"), type="character", default=NULL,
                help="Printf-like pattern for output PDFs with plots, %d for plot index",
                metavar="pattern"),
-   make_option(c("-f", "--flip"), action = "store_true", default = FALSE,
-               help="Should the z-order be flipped?")
+   make_option(c("-f", "--flip"), type = "integer", default = 0,
+               help="Z flipping (1: no flip, -1: flip, 0: try both, default)")
 );
 opt_parser <- OptionParser(option_list=option_list);
 opt <- parse_args(opt_parser);
@@ -38,9 +38,6 @@ M<-read.csv(opt$mri,header=F,col.names = c('id','x','y','z','area','perim'))
 # Adjust area by spacing (should be done when generating file)
 B$area = B$area * 0.33 * 0.33
 M$area = M$area * 0.2 * 0.2
-
-# Set the flip to either -1 or 1
-flip <- ifelse(opt$flip, -1, 1)
 
 # Number of blocks
 N=length(levels(as.factor(B$block)))
@@ -70,19 +67,19 @@ remap_bf_z <- function(B, flip, offset, scale, padding)
   return(Bz)
 }
 
-# Compute initial offset
-Br_init = remap_bf_z(B, flip, 0, 1, rep(0.5,N-1));
+find_init_offset <- function(flip)
+{
+  # Compute initial offset
+  Br_init = remap_bf_z(B, flip, 0, 1, rep(0.5,N-1));
 
-# Compute the z center of mass for blockface and MRI
-zctr_M = sum(M$z * M$area) / sum(M$area);
-zctr_Br_init = sum(Br_init$z * Br_init$area) / sum(Br_init$area);
+  # Compute the z center of mass for blockface and MRI
+  zctr_M = sum(M$z * M$area) / sum(M$area);
+  zctr_Br_init = sum(Br_init$z * Br_init$area) / sum(Br_init$area);
 
-# Set the initial offset
-zoff_init = zctr_M - zctr_Br_init
-
-# Check the initialization
-Br = remap_bf_z(B, flip, zoff_init, 1, c(0.5,0.5,0.5));
-Br$tarea = approx(x=M$z, y=M$area, xout=Br$z, method="linear", yleft=0, yright=0)$y
+  # Set the initial offset
+  zoff_init = zctr_M - zctr_Br_init
+  return(zoff_init)
+}
 
 # Objective function for optimization
 objfun<-function(p)
@@ -90,7 +87,7 @@ objfun<-function(p)
   Br = remap_bf_z(B, flip, p[1], 1.0, p[3:length(p)]);
   Br$tarea = approx(x=M$z, y=M$area, xout=Br$z, method="linear", yleft=0, yright=0)$y
   rcoeff=cor(Br$tarea, Br$area, method="spearman")
-  print(rcoeff)
+  # print(rcoeff)
   return(1.0 - rcoeff)
 }
 
@@ -115,9 +112,27 @@ ui = rbind(c(0,0,1,0,0),
 
 ci = c(0,0,0)
 
-# Perform actual optimization
-res=constrOptim(theta=c(-40, 1.0, rep(0.5, N-1)), f=objfun, method="Nelder-Mead",
+# Perform optimization with flip = 1
+flip = 1
+zoff_init<-find_init_offset(flip)
+res.noflip=constrOptim(theta=c(zoff_init, 1.0, rep(0.5, N-1)), f=objfun, method="Nelder-Mead",
                 ui=ui, ci=ci, control=list(maxit=5000))
+
+flip = -1
+zoff_init<-find_init_offset(flip)
+res.flip=constrOptim(theta=c(zoff_init, 1.0, rep(0.5, N-1)), f=objfun, method="Nelder-Mead",
+                ui=ui, ci=ci, control=list(maxit=5000))
+
+# Select which result to use
+if(opt$flip < 0 || (flip==0 && res.noflip$value < res.flip$value )) {
+  res = res.flip
+  flip = -1
+  print(paste("Using z-flipped result: rho = ", 1 - res.flip$value))
+} else {
+  res = res.noflip
+  flip = 1
+  print(paste("Using not z-flipped result: rho = ", 1 - res.noflip$value))
+}
 
 # Compute the optimal mapping
 Br = remap_bf_z(B, flip, res$par[1], 1., res$par[3:length(res$par)]);
@@ -127,7 +142,7 @@ Br$ty = approx(x=M$z, y=M$y, xout=Br$z, method="linear", yleft=0, yright=0)$y
 
 # Save output matrices
 for(b in levels(as.factor(B$block))) {
-  Bi=subset(Br, block=='HR2a')
+  Bi=subset(Br, block==b)
 
   # Centroid offsets
   dx = sum(Bi$x * Bi$area)/sum(Bi$area) - sum(Bi$tx * Bi$tarea)/sum(Bi$tarea)
