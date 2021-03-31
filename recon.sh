@@ -1964,12 +1964,22 @@ function rough_map_deepcluster_to_mri()
       -foreach-comp 3 -add -sqrt -endfor \
       -wsum 200 100 0 -o $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH
 
+    # New code uses a dilated mask instead of a shrunk mask to promote the use
+    # of slide edges during registration
+    #c2d -mcs $TMPDIR/prob1.nii.gz $TMPDIR/prob2.nii.gz \
+    #  -foreach -dup -times -endfor \
+    #  -foreach-comp 3 -add -sqrt -endfor \
+    #  -vote -thresh 2 2 0 1 \
+    #  -dup -dup -scale 0 -shift 1 -pad 3x3 3x3 0 -dilate 0 4x4 \
+    #  -int 0 -reslice-identity -times \
+    #  -o $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK
+
     c2d -mcs $TMPDIR/prob1.nii.gz $TMPDIR/prob2.nii.gz \
       -foreach -dup -times -endfor \
       -foreach-comp 3 -add -sqrt -endfor \
       -vote -thresh 2 2 0 1 \
       -dup -dup -scale 0 -shift 1 -pad 3x3 3x3 0 -dilate 0 4x4 \
-      -int 0 -reslice-identity -times \
+      -int 0 -reslice-identity -times -dilate 1 8x8 \
       -o $SLIDE_DEEPCLUSTER_MRILIKE_ROUGH_MASK
 
   done < $HISTO_RECON_EXPECTED
@@ -2070,7 +2080,8 @@ function recon_histology()
   # Whether the block is sectioned anteriorly or posteriorly (this affects how ZPOS
   # is computed.
   # TODO: associate ZPOS with slice at the blockface stage, not this late in the process
-  local ZFLIP=$(echo $block | cut -c 4-4 | sed -e "s/a/0/" -e "s/p/1/")
+  local ZFLIP ZPOS
+  ZFLIP=$(echo $block | cut -c 4-4 | sed -e "s/a/0/" -e "s/p/1/")
 
   while IFS=, read -r svs stain dummy section slice args; do
 
@@ -2090,15 +2101,9 @@ function recon_histology()
       continue
     fi
 
-    # Generate the pattern to search for
-    SEARCH_PAT=$(printf "%s_%02d_%02d" $block $section $slice)
-
-    # Get the z-position of this slice in the world coordinates of the blockface stack nii
-    if [[ $ZFLIP -eq 0 ]]; then
-      ZPOS=$(grep -n "$SEARCH_PAT" $BF_SLIDES | awk -F: -v t=$THK '{print ($1-1) * t}')
-    else
-      ZPOS=$(grep -n "$SEARCH_PAT" $BF_SLIDES | awk -F: -v t=$THK '{print (1-$1) * t}')
-    fi
+    # Find the slide in the blockface manifest file
+    local slidename=$(printf "%s_%s_%02d_%02d" ${id} ${block} ${section} ${slice})
+    ZPOS=$(awk -v N=$slidename '$1 == N {print $2}' "$BFDC_RECON_MANIFEST")
 
     # If not found, generate warning, do not add slice
     # TODO: there are some missing blockface scans. We need a more robust way to generate
@@ -2159,17 +2164,17 @@ function recon_histology()
     # previously used value of 0.5 ended up having lots of slices skipped. But
     # need to doublecheck that this does not hurt other registrations
     stack_greedy recon -z 1.6 4 0.1 \
-      -m NCC 8x8 -n 100x40x0 -search 4000 flip 5 $HISTO_RECON_DIR
+      -m WNCC 8x8 -n 100x40x0 -search 4000 flip 5 $HISTO_RECON_DIR
 
     stack_greedy volmatch -i $HIRES_MRI_TO_BFVIS_WARPED \
-      -m NCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
+      -m WNCC 8x8 -n 100x40x10 -search 4000 flip 5 $HISTO_RECON_DIR
 
     # Add the MRI volume, which will serve as target for subsequent registrations
     ### stack_greedy -N voladd -i $HIRES_MRI_TO_BFVIS_WARPED -n mri $HISTO_RECON_DIR
 
     # Run affine registration to MRI
     stack_greedy voliter -R 1 5 -na 10 -nd 10 -w 0.5 -wdp \
-      -m NCC 8x8 -n 100x40x10 \
+      -m WNCC 8x8 -n 100x40x10 \
       $HISTO_RECON_DIR
 
     # Rematch histology to MRI based on affine result
@@ -2177,7 +2182,7 @@ function recon_histology()
 
     # Run affine registration to MRI
     stack_greedy voliter -R 6 10 -na 10 -nd 10 -w 0.5 -wdp \
-      -m NCC 8x8 -n 100x40x10 \
+      -m WNCC 8x8 -n 100x40x10 \
       $HISTO_RECON_DIR
 
     # Rematch histology to MRI based on affine result
@@ -2185,7 +2190,7 @@ function recon_histology()
 
     # We are using the result of iteration 20 to start the MRI registration
     stack_greedy voliter -R 11 20 -na 10 -nd 10 -w 2.0 -wdp \
-      -m NCC 8x8 -n 40x80x80 -s 3.0mm 0.25mm -mm \
+      -m WNCC 8x8 -n 40x80x80 -s 3.0mm 0.25mm -mm \
       -M $HISTO_DEEPCLUSTER_MRILIKE_MANIFEST \
       $HISTO_RECON_DIR
 
@@ -2664,11 +2669,8 @@ function recon_histo_all()
   while read -r id blocks; do
     if [[ $id =~ $REGEXP ]]; then
       for block in $blocks; do
-        # Pull the histology manifest (no need for qsubbing)
-        pull_histo_match_manifest $id $block
-
         # Submit the jobs
-        pybatch -N "recon_histo_${id}_${block}" -m 8G \
+        pybatch -N "recon_histo_${id}_${block}" -m 8G -n 8 \
           $0 recon_histology $id $block $skip_reg
       done
     fi
