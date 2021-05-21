@@ -1,6 +1,6 @@
 # WildCat Classifier Training and Application
 
-The classifier is used for tangle detection and burden mapping on whole-slide images. This document describes how to train and apply the classifier.
+The [*WildCat*](https://github.com/durandtibo/wildcat.pytorch) weakly supervised learning algorithm is used for tangle (and other object) detection and burden mapping on whole-slide histology images. This document describes how to train and apply WildCat.
 
 * [*PICSL Histology Annotation Server (PHAS)*](https://github.com/pyushkevich/histoannot) is used to place training samples.
   * We assume your PHAS server is accessible at `https://my.histoannot.url`
