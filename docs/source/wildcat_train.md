@@ -164,7 +164,7 @@ This step is also optional and will take longer. It allows you to explore whole-
 
 Follow these instructions if you would like to compare the quantitative burden measure to manual counts of objects of interest (e.g., tangle counts), and subjective ratings. In the histology annotation platform, set up a new task, as shown below. Large boxes are used to designate areas for validation. They can be assigned labels corresponding to ratings. Small boxes are used to mark all individual inclusions of each type that are being counted.
    
-     ![](img/wildcat_counting_example.png)
+   ![](img/wildcat_counting_example.png)
 
 When you are ready to perform the evaluation:
 
