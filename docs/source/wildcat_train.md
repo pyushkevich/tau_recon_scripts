@@ -160,6 +160,23 @@ This step is also optional and will take longer. It allows you to explore whole-
      ![](img/wildcat_burden_example.png)
 
 
+## Validate WildCat classifier vs. Manual Ratings and Object Counts
+
+Follow these instructions if you would like to compare the quantitative burden measure to manual counts of objects of interest (e.g., tangle counts), and subjective ratings. In the histology annotation platform, set up a new task, as shown below. Large boxes are used to designate areas for validation. They can be assigned labels corresponding to ratings. Small boxes are used to mark all individual inclusions of each type that are being counted.
+   
+     ![](img/wildcat_counting_example.png)
+
+When you are ready to perform the evaluation:
+
+1. Clone the samples into the directory `$PATCH_ROOT`. Set `CTID` to the counting task id. Note the -X flag, which will download patches in the size drawn as opposed to default 512x512 patches previously cloned.
+
+        clone_samples.sh -s https://my.histoannot.url -k ~/.histoannot_key.json -t $CTID -o $PATCH_ROOT/counting -X
+        
+2. Duplicate, edit and run the notebook `generic-wcu-counts.ipynb`. 
+
+3. You will need to set `exp_dir` to the directory where you performed WildCat training, and `cnt_dir` to `$PATCH_ROOT/counting`. You will also need to set the dictionaries `container_labels` and `objects_of_interest_labels` to match the labels used to mark large boxes and individual inclusions that should be included in the counting. Towards the end of the notebook, you will need to set `box_labels` to indicate your rating categories for the large boxes.
+
+
 ## Training WildCat network from the command line
 
 1. Clone the repo [https://github.com/pyushkevich/tangle-cnn-prod](https://github.com/pyushkevich/tangle-cnn-prod)
