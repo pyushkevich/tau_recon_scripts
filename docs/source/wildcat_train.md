@@ -106,7 +106,9 @@ A training task involves classifying a set of foreground objects vs. a set of ba
    
        $PATCH_ROOT/patches/exp01/patches/<train|val|test>/<tangle|nontangle>/12345.png
        
-## Train WildCat classifier
+## Train WildCat classifier in Jupyter
+
+*Alternatively, you can train the classifier from the command line, see below*
 
 1. Start the Jupyter notebook app 
 
@@ -158,8 +160,24 @@ This step is also optional and will take longer. It allows you to explore whole-
      ![](img/wildcat_burden_example.png)
 
 
-## Training WildCat network for production mode
+## Training WildCat network from the command line
 
+1. Clone the repo [https://github.com/pyushkevich/tangle-cnn-prod](https://github.com/pyushkevich/tangle-cnn-prod)
+
+2. Install required packages 
+
+        pip -r requirements.txt
+
+3. Run training script as follows
+
+        # Run this to see all options for training
+        python wildcat_main.py train --help 
+        
+        # Run this to run with the default options
+        python wildcat_main.py train \
+           --expdir $PATCH_ROOT/patches/exp01
+           
+   The script will create a directory `$PATCH_ROOT/patches/exp01/models` containing your trained classifier
 
 
 ## Applying WildCat models in batch mode
