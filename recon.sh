@@ -24,20 +24,22 @@
 
 # Read local configuration
 # shellcheck source=src/common.sh
-set -x -e
+set -e
+
+# So we can assign globs to arrays
+shopt -s nullglob
+
 if [[ $TAU_ATLAS_ROOT ]]; then
   . $TAU_ATLAS_ROOT/scripts/common.sh
 else
   . "$(dirname $0)/common.sh"
 fi
 
-# Histoannot server options
-PHAS_SERVER="https://histo.itksnap.org"
-PHAS_ANNOT_TASK=2
-PHAS_REGEVAL_TASK=6
-
 # Common QSUB options
 QSUBOPT="-cwd -V -j y -o $ROOT/dump ${RECON_QSUB_OPT}"
+
+# Skip level (set using the -s flag)
+SKIPLEVEL=0
 
 # Set variables for template building
 function set_template_vars()
@@ -110,6 +112,10 @@ function set_specimen_vars()
   # Read the global stuff
   set_template_vars
 
+  # Location for the final QC files for this specimen. Final QC should all
+  # go into a flat folder to make it easier to check with eog, etc.
+  SPECIMEN_QCDIR=$ROOT/work/$id/qc
+
   # MRI inputs (7T for the mold)
   MOLD_MRI_INPUT_DIR=$ROOT/input/${id}/mold_mri
   MOLD_MRI=$MOLD_MRI_INPUT_DIR/mtl7t.nii.gz
@@ -151,6 +157,9 @@ function set_specimen_vars()
   HIRES_MRI_REGMASK=$MRI_WORK_DIR/${id}_mri_hires_mask.nii.gz
   RESLICE_MOLD_TO_HIRES=$MRI_WORK_DIR/${id}_mri_mold_reslice_to_hires.nii.gz
   RESLICE_HIRES_TO_MOLD=$MRI_WORK_DIR/${id}_mri_hires_reslice_to_mold.nii.gz
+
+  # QC for the registration
+  MOLD_TO_HIRES_QC_IMAGE=$SPECIMEN_QCDIR/${id}_mri_hires_to_mold.png
 
   # A file with coordinates of slice mask centroids and slice areas, for matching
   # to the blockface along z-axis
@@ -210,10 +219,6 @@ function set_specimen_vars()
 
   TEMPLATE_HIRES_VIS_FINAL_WARP=$MRI_WORK_DIR/${id}_hires_vis_to_template_warp.nii.gz
   TEMPLATE_HIRES_VIS_FINAL_JACOBIAN=$MRI_WORK_DIR/${id}_hires_vis_to_template_jacobian.nii.gz
-
-  # Location for the final QC files for this specimen. Final QC should all
-  # go into a flat folder to make it easier to check with eog, etc.
-  SPECIMEN_QCDIR=$ROOT/work/$id/qc
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -405,12 +410,14 @@ function set_block_vars()
   HISTO_NISSL_SPLAT_ZPOS_FILE=$HISTO_SPLAT_DIR/${id}_${block}_splat_zindex.txt
 
   # Directory for histology annotations
+  HISTO_ANNOT_INPUT_DIR=$ROOT/input/$id/histo_annot
   HISTO_ANNOT_DIR=$ROOT/work/$id/annot/$block
   HISTO_ANNOT_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_manifest.txt
   HISTO_ANNOT_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_annot_splat_%s.nii.gz
   HISTO_ANNOT_HIRES_MRI=$HISTO_SPLAT_DIR/${id}_${block}_annot_mri_hires.nii.gz
 
   # Directory for registation validation curves from histology
+  HISTO_REGEVAL_INPUT_DIR=$ROOT/input/$id/histo_regeval
   HISTO_REGEVAL_DIR=$ROOT/work/$id/regeval/$block
 
   # Splatted files
@@ -419,6 +426,8 @@ function set_block_vars()
   HISTO_NISSL_MRILIKE_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_mrilike_splat_manifest.txt
   HISTO_NISSL_MRILIKE_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_mrilike_splat_%s.nii.gz
   HISTO_NISSL_SPLAT_WORKSPACE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_rgb_splat.itksnap
+
+  HISTO_NISSL_TO_MRI_QC_IMAGE=$SPECIMEN_QCDIR/${id}_${block}_nissl_to_mri_qc.png
 
   # Reference images for the splatting
   HISTO_NISSL_SPLAT_BF_MRILIKE=$HISTO_SPLAT_DIR/${id}_${block}_nissl_splat_bf_mrilike.nii.gz
@@ -597,15 +606,13 @@ function set_histo_common_slice_vars()
   SLIDE_RAW_AFFINE_MATRIX_GSURL=$GSURL_RECON_BASE/${svs}_recon_iter10_affine.mat
 
   # The name of the annotation SVG file and timestamp (don't change, filename hardcoded in download_svg)
-  SLIDE_ANNOT_SVG=$HISTO_ANNOT_DIR/${svs}_annot.svg
+  SLIDE_ANNOT_SVG=$HISTO_ANNOT_INPUT_DIR/${svs}_annot.svg
   SLIDE_ANNOT_PNG=$HISTO_ANNOT_DIR/${svs}_annot.png
-  SLIDE_ANNOT_TIMESTAMP=$HISTO_ANNOT_DIR/${svs}_timestamp.json
 
   # The name of the registration evaluation SVG file and timestamp (don't change, filename hardcoded in download_svg)
-  SLIDE_REGEVAL_SVG=$HISTO_REGEVAL_DIR/${svs}_annot.svg
+  SLIDE_REGEVAL_SVG=$HISTO_REGEVAL_INPUT_DIR/${svs}_annot.svg
   SLIDE_REGEVAL_PNG=$HISTO_REGEVAL_DIR/${svs}_annot.png
   SLIDE_REGEVAL_CLEAN_PNG=$HISTO_REGEVAL_DIR/${svs}_annot_clean.png
-  SLIDE_REGEVAL_TIMESTAMP=$HISTO_REGEVAL_DIR/${svs}_timestamp.json
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -686,7 +693,7 @@ function check_file()
   local GREEN='\033[0;32m'
   local NC='\033[0m' # No Color
   if [[ -f ${1?} ]]; then
-    echo -e "${GREEN}${1?}${NC}"
+    echo -e "${GREEN}$(echo $1 | sed -e "s|$PWD/|./|")${NC}"
   else
     echo -e "${RED}Not Found${NC}"
   fi
@@ -699,7 +706,7 @@ function check_file_opt()
   local GREEN='\033[0;32m'
   local NC='\033[0m' # No Color
   if [[ -f ${1?} ]]; then
-    echo -e "${GREEN}${1?}${NC}"
+    echo -e "${GREEN}$(echo $1 | sed -e "s|$PWD/|./|")${NC}"
   else
     echo -e "${YELLOW}Not Found${NC}"
   fi
@@ -731,6 +738,18 @@ function check_fraction()
     echo -e "${GREEN}${1}/${2}${NC}"
   else
     echo -e "${RED}${1}/${2}${NC}"
+  fi
+}
+
+function check_fraction_opt()
+{
+  local GREEN='\033[0;32m'
+  local YELLOW='\033[0;34m'
+  local NC='\033[0m' # No Color
+  if [[ $1 -eq $2 ]]; then
+    echo -e "${GREEN}${1}/${2}${NC}"
+  else
+    echo -e "${YELLOW}${1}/${2}${NC}"
   fi
 }
 
@@ -786,6 +805,8 @@ function check_specimen_inputs()
       local N_EXPECTED=0
       local N_DENSITY=0
       local N_DENSITY_EXPECTED=0
+      local N_ANNOT=0
+      local N_REGEVAL=0
 
       # Read the individual slides
       while IFS=, read -r svs stain dummy section slice args; do
@@ -815,6 +836,12 @@ function check_specimen_inputs()
             done
           fi
 
+          # Count annotations
+          if [[ $active_stain == NISSL ]]; then
+            if [[ -f $SLIDE_ANNOT_SVG ]]; then let N_ANNOT=$((N_ANNOT+1)); fi
+            if [[ -f $SLIDE_REGEVAL_SVG ]]; then let N_REGEVAL=$((N_REGEVAL+1)); fi
+          fi
+
         fi
 
       done < $HISTO_MATCH_MANIFEST
@@ -823,6 +850,8 @@ function check_specimen_inputs()
         echo "Block ${block} Stain ${active_stain} Preprocessed Slides:" $(check_fraction $N_PROC $N_EXPECTED)
         if [[ $active_stain == "NISSL" ]]; then
           echo "Block ${block} Stain ${active_stain} DeepCluster Slides: " $(check_fraction $N_DEEPCLUSTER $N_EXPECTED)
+          echo "Block ${block} Stain ${active_stain} Anatomy Slides    : " $(check_fraction_opt $N_ANNOT $N_EXPECTED)
+          echo "Block ${block} Stain ${active_stain} RegEval Slides    : " $(check_fraction_opt $N_REGEVAL $N_EXPECTED)
         fi
       fi
 
@@ -882,37 +911,34 @@ function check_specimen_results()
     echo "Block ${block} BF/MRI workspace:    $(check_file $MRI_TO_BFVIS_WORKSPACE)"
   done
 
-  echo "=== Checking histology preprocessing (preproc_histology_all) ==="
-  local N_MASK_EXPECTED=0
-  local N_MASK_FOUND=0
-  local N_DECONV_EXPECTED=0
-  local N_DECONV_FOUND=0
+  echo "=== Checking histology recon (recon_histo_all) ==="
   for block in $blocks; do
     set_block_vars $id $block
+
+    # Count masks (preprocessing result)
+    local N_MASK_EXPECTED=0
+    local N_MASK_FOUND=0
     while IFS=, read -r svs stain dummy section slice args; do
-
-      set_ihc_slice_vars $id $block $svs $stain $section $slice $args
-
-      if [[ -f $SLIDE_RGB ]]; then
-        # Count color deconvolutions
-        N_DECONV_EXPECTED=$((N_DECONV_EXPECTED+1))
-        if [[ -f $SLIDE_DAB_SCALAR && -f $SLIDE_HEM_SCALAR ]]; then
-          N_DECONV_FOUND=$((N_DECONV_FOUND+1))
-        fi
-
-        # Count masks
-        if [[ $stain == NISSL ]]; then
-          N_MASK_EXPECTED=$((N_MASK_EXPECTED+1))
-          if [[ -f $SLIDE_MASK ]]; then
-            N_MASK_FOUND=$((N_MASK_FOUND+1))
-          fi
+      # Count masks
+      if [[ $stain == NISSL ]]; then
+        set_ihc_slice_vars $id $block $svs $stain $section $slice $args
+        N_MASK_EXPECTED=$((N_MASK_EXPECTED+1))
+        if [[ -f $SLIDE_MASK ]]; then
+          N_MASK_FOUND=$((N_MASK_FOUND+1))
         fi
       fi
-
     done < $HISTO_MATCH_MANIFEST
+
+    echo "Block ${block} slides with masks:   $(check_fraction $N_MASK_FOUND $N_MASK_EXPECTED)"
+    echo "Block ${block} recon manifest:      $(check_file $HISTO_RECON_EXPECTED)"
+    echo "Block ${block} Nissl/MRI affine:    $(check_file $(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-10))"
+    echo "Block ${block} Nissl/MRI deform:    $(check_file $(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20))"
+    echo "Block ${block} Nissl/MRI workspace: $(check_file $MRI_TO_BFVIS_WORKSPACE)"
   done
-  echo "Color deconvolved slides:       $(check_fraction $N_DECONV_FOUND $N_DECONV_EXPECTED)"
-  echo "Nissl slides with masks:        $(check_fraction $N_MASK_FOUND $N_MASK_EXPECTED)"
+
+  echo "=== Checking merge preprocessing (merge_preproc_all) ==="
+  echo "9.4T MRI in target space:       $(check_file $HIRES_MRI_VIS)"
+  echo "9.4T MRI mask in target space:  $(check_file $MOLD_MRI_MASK_VIS)"
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -1264,7 +1290,7 @@ function recon_blockface_all()
 
     # Submit the jobs
     pybatch -N "recon_bf_${id}_${block}" -m 16G \
-      $0 recon_blockface $id $block $args
+      $0 -d recon_blockface $id $block $args
 
   done
 
@@ -1316,7 +1342,7 @@ function process_mri()
 
     # Perform iterative affine registration
     greedy -d 3 -a -i "$HIRES_MRI" "$MOLD_MRI_N4" \
-      -ia "$TMPDIR/${id}_moments.mat" -ia  "$HIRES_TO_MOLD_MANUAL_AFFINE,-1" \
+      -ia  "$HIRES_TO_MOLD_MANUAL_AFFINE,-1" \
       -o "$TMPDIR/${id}_affine.mat" -m WNCC 8x8x8 -n 100x100x0x0 \
       -gm "$HIRES_MRI_REGMASK"
 
@@ -1346,7 +1372,9 @@ function process_mri()
     -wp 0.0001 -exp 6
 
   # Apply the registration
-  greedy -d 3 -rf $HIRES_MRI -rm $MOLD_MRI_N4 $RESLICE_MOLD_TO_HIRES \
+  greedy -d 3 -rf $HIRES_MRI \
+    -rm $MOLD_MRI_N4 $RESLICE_MOLD_TO_HIRES \
+    -ri label 0.2vox -rm $MOLD_MRI_MASK_NATIVESPC $TMPDIR/mask_to_hires.nii.gz \
     -r $MOLD_TO_HIRES_ROOT_WARP,64 $HIRES_TO_MOLD_AFFINE,-1
 
   # Generate the inverse warp
@@ -1360,6 +1388,15 @@ function process_mri()
     -laa $RESLICE_MOLD_TO_HIRES -psn "MOLD_MRI_warped" -props-set-contrast AUTO \
     -laa $MOLD_TO_HIRES_WARP -psn "Warp" \
     -o $MOLD_TO_HIRES_WORKSPACE
+
+
+  # For the screenshot, create a trimming mask
+  c3d $TMPDIR/mask_to_hires.nii.gz -trim 5vox -o $TMPDIR/qc_ref_space.nii.gz
+
+  # Create a screenshot in the QC dir
+  $ROOT/scripts/lightbox.sh $ROOT/scripts/lb_mold_to_hires_reg.json \
+    "$MOLD_TO_HIRES_QC_IMAGE" \
+    $HIRES_MRI $RESLICE_MOLD_TO_HIRES $TMPDIR/qc_ref_space.nii.gz
 
   # Generate a CSV of mask slice statistics, for blockface z-matching
   c3d "$MOLD_MRI_MASK_MOLDSPC" \
@@ -1418,7 +1455,7 @@ function process_mri_all()
     if [[ $id =~ $REGEXP ]]; then
       # Submit the jobs
       pybatch -N "mri_reg_${id}" -m 16G \
-        $0 process_mri $id $orient
+        $0 -d process_mri $id $orient
     fi
   done < "$MDIR/moldmri_src.txt"
 
@@ -1524,7 +1561,7 @@ function match_blockface_to_mri_initial_all()
     if [[ $id =~ $REGEXP ]]; then
       # Submit the jobs
       pybatch -N "mri_bf_init_${id}"  -m 8G \
-        $0 match_blockface_to_mri_initial $id
+        $0 -d match_blockface_to_mri_initial $id
     fi
   done < "$MDIR/blockface_src.txt"
 
@@ -1887,9 +1924,9 @@ function preproc_histology()
       continue
     fi
 
-    # Generate a mask from the RGB (only for NISSL slices)
-    # TODO: remove the 'exists' check for production
-    if [[ $stain == "NISSL" && ! -f $SLIDE_MASK ]]; then
+    # Generate a mask from the RGB (only for NISSL slices). However, we skip this step
+    # if a mask already exists and is newer than the slide RGB
+    if [[ $stain == "NISSL" && $SLIDE_RGB -nt $SLIDE_MASK ]]; then
 
       c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
         -pop -pop -thresh 0.5 inf 1 0 -o $SLIDE_MASK
@@ -1897,24 +1934,25 @@ function preproc_histology()
     fi
 
     # Generate the stain-specific RGB images for non-NISSL stains via color deconvolution
+    if [[ $SLIDE_RGB -nt $SLIDE_HEM_SCALAR ||  $SLIDE_RGB -nt $SLIDE_DAB_SCALAR ]]; then
 
-    # TODO: the RGB are probably useless
-    # Generate the hematoxylin and DAB maps
-    c2d -mcs $SLIDE_RGB \
-      -foreach -stretch 0 98% 0 1 -clip 0 1 -log10 -scale -1 -endfor \
-      -popas ODB -popas ODG -popas ODR \
-      -push ODR -push ODG -push ODB \
-      -wsum 1.88 -0.07 -0.60 -o $SLIDE_HEM_SCALAR -popas C_HEM \
-      -push C_HEM -scale 0.65 -push C_HEM -scale 0.70 -push C_HEM -scale 0.29 \
-      -foreach -scale -1 -exp -endfor \
-      -omc $SLIDE_HEM_RGB \
-      -clear -push ODR -push ODG -push ODB \
-      -wsum -0.55 -0.13 1.57 -o $SLIDE_DAB_SCALAR -popas C_DAB \
-      -push C_DAB -scale 0.27 -push C_DAB -scale 0.57 -push C_DAB -scale 0.78 \
-      -foreach -scale -1 -exp -endfor \
-      -omc $SLIDE_DAB_RGB
+      # Generate the hematoxylin and DAB maps
+      # TODO: the RGB are probably useless
+      c2d -mcs $SLIDE_RGB \
+        -foreach -stretch 0 98% 0 1 -clip 0 1 -log10 -scale -1 -endfor \
+        -popas ODB -popas ODG -popas ODR \
+        -push ODR -push ODG -push ODB \
+        -wsum 1.88 -0.07 -0.60 -o $SLIDE_HEM_SCALAR -popas C_HEM \
+        -push C_HEM -scale 0.65 -push C_HEM -scale 0.70 -push C_HEM -scale 0.29 \
+        -foreach -scale -1 -exp -endfor \
+        -omc $SLIDE_HEM_RGB \
+        -clear -push ODR -push ODG -push ODB \
+        -wsum -0.55 -0.13 1.57 -o $SLIDE_DAB_SCALAR -popas C_DAB \
+        -push C_DAB -scale 0.27 -push C_DAB -scale 0.57 -push C_DAB -scale 0.78 \
+        -foreach -scale -1 -exp -endfor \
+        -omc $SLIDE_DAB_RGB
 
-
+    fi
   done < $HISTO_MATCH_MANIFEST
 }
 
@@ -1942,7 +1980,7 @@ function rough_map_deepcluster_to_mri()
 
     # Get the dimensions of the deep cluster image
     local DDIM=$(c2d $SLIDE_DEEPCLUSTER -info-full | grep Dimensions | sed -e "s/.*://")
-    local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq .[]))
+    local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq -r '.[]'))
 
     # Fix header to match the RGB image
     c2d $SLIDE_RGB -resample $DDIM2 -popas X \
@@ -2010,7 +2048,7 @@ function fit_deepcluster_to_mri()
 
     # Get the dimensions of the deep cluster image
     local DDIM=$(c2d $SLIDE_DEEPCLUSTER -info-full | grep Dimensions | sed -e "s/.*://")
-    local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq .[]))
+    local DDIM2=$(printf '%dx%d' $(echo $DDIM | jq -r '.[]'))
 
     # Fix header
     c2d $SLIDE_RGB -resample $DDIM2 -popas X \
@@ -2046,18 +2084,73 @@ function fit_deepcluster_to_mri()
 }
 
 
+function process_slide_annot_svg()
+{
+  local id block svs args
+  read -r id block svs args <<< "$@"
+  set_block_vars $id $block
+  set_histo_common_slice_vars $id $block $svs
+
+  # For speed, check timestamp before generating PNG
+  if [[ $SLIDE_ANNOT_SVG -nt $SLIDE_ANNOT_PNG ]]; then
+
+    # Convert SVG to PNG
+    mkdir -p $HISTO_ANNOT_DIR
+    convert ${IMAGEMAGICK_FONT_CMD} -density 2 -depth 8 $SLIDE_ANNOT_SVG \
+      -set colorspace Gray -separate -average -negate \
+      $SLIDE_ANNOT_PNG
+
+  fi
+}
+
+function process_slide_regeval_svg()
+{
+  local VSUM
+  local id block svs args
+  read -r id block svs args <<< "$@"
+  set_block_vars $id $block
+  set_histo_common_slice_vars $id $block $svs
+
+  # For speed, check timestamp before generating PNG
+  if [[ $SLIDE_REGEVAL_SVG -nt $SLIDE_REGEVAL_CLEAN_PNG ]]; then
+
+    # Convert SVG to PNG
+    mkdir -p $HISTO_REGEVAL_DIR
+    convert ${IMAGEMAGICK_FONT_CMD} -density 2 -depth 8 $SLIDE_REGEVAL_SVG \
+      -set colorspace Gray -separate -average -negate \
+      $SLIDE_REGEVAL_PNG
+
+    # Check if the PNG is empty
+    VSUM=$(c2d $SLIDE_REGEVAL_PNG -voxel-sum | awk '{print $3}')
+    if [[ $VSUM != "0" ]]; then
+      c2d $SLIDE_REGEVAL_PNG \
+        -as X -thresh 0 17 1 0 -push X -thresh 18 59 1 0 -push X -thresh 60 inf 1 0 \
+        -foreach -smooth 2mm -endfor -vote -replace 0 0 1 34 2 85 \
+        -type uchar -o $SLIDE_REGEVAL_CLEAN_PNG
+    else
+      echo "Empty annotation $SLIDE_REGEVAL_PNG"
+      rm -rf $SLIDE_REGEVAL_CLEAN_PNG
+    fi
+  fi
+}
+
+
+
 function recon_histology()
 {
-  local id block skip_reg args
+  local id block args
 
   # What specimen and block are we doing this for?
-  read -r id block skip_reg args <<< "$@"
+  read -r id block args <<< "$@"
 
   # Set the block variables
   set_block_vars $id $block
 
   # Create directories
   mkdir -p $HISTO_SPLAT_DIR $HISTO_RECON_DIR $HISTO_REG_DIR
+
+  # Run the preprocessing script (no need for a separate call for something that simple)
+  preproc_histology $id $block
 
   # Slice thickness. If this ever becomes variable, read this from the blockface_param file
   THK="0.05"
@@ -2127,13 +2220,19 @@ function recon_histology()
     echo $svs $ZPOS >> $NISSL_ZRANGE
 
     # Check if there is a registration validation tracing for this slide
-    if [[ -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
-      echo $svs $SLIDE_REGEVAL_CLEAN_PNG >> $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
+    if [[ -f $SLIDE_REGEVAL_SVG ]]; then
+      process_slide_regeval_svg $id $block $svs
+      if [[ -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
+        echo $svs $SLIDE_REGEVAL_CLEAN_PNG >> $HISTO_NISSL_REGEVAL_SPLAT_MANIFEST
+      fi
     fi
 
     # Check if there is an annotation validation tracing for this slide
-    if [[ -f $SLIDE_ANNOT_PNG ]]; then
-      echo $svs $SLIDE_ANNOT_PNG >> $HISTO_ANNOT_SPLAT_MANIFEST
+    if [[ -f $SLIDE_ANNOT_SVG ]]; then
+      process_slide_annot_svg $id $block $svs
+      if [[ -f $SLIDE_ANNOT_SVG ]]; then
+        echo $svs $SLIDE_ANNOT_PNG >> $HISTO_ANNOT_SPLAT_MANIFEST
+      fi
     fi
 
   done < $HISTO_MATCH_MANIFEST
@@ -2150,7 +2249,8 @@ function recon_histology()
     return
   fi
 
-  if [[ $skip_reg -eq 1 ]]; then
+  # TODO: there should be a check for whether the output has been generated
+  if [[ $SKIPLEVEL -ge 1 ]]; then
     echo "Skipping registration"
   else
 
@@ -2325,6 +2425,17 @@ function recon_histology()
     -laa $BFVIS_RGB -psn "Blockface" -props-set-contrast LINEAR 0.0 0.5 -props-set-mcd rgb \
     -las $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES \
     -o $HISTO_NISSL_SPLAT_WORKSPACE
+
+  # Create a QC image
+  $ROOT/scripts/lightbox.sh "$ROOT/scripts/lb_nissl_mri_reg.json" \
+    "$HISTO_NISSL_TO_MRI_QC_IMAGE" \
+    "$HIRES_MRI_TO_BFVIS_WARPED" \
+    "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)" \
+    "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-10)" \
+    "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-20)" \
+    "$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-10)" \
+    "$BFVIS_RGB"
+
 
 }
 
@@ -2635,35 +2746,10 @@ function compute_regeval_metrics_ihc()
 }
 
 
-function preproc_histology_all()
-{
-  # Read an optional regular expression from command line
-  REGEXP=$1
-
-  # Process the individual blocks
-  while read -r id blocks; do
-    if [[ $id =~ $REGEXP ]]; then
-      for block in $blocks; do
-        # Submit the jobs
-        pybatch -N "preproc_histo_${id}_${block}" -m 4G \
-          $0 preproc_histology $id $block
-      done
-    fi
-  done < "$MDIR/blockface_src.txt"
-
-  # Wait for completion
-  pybatch -w "preproc_histo_*"
-}
-
-
-
 function recon_histo_all()
 {
   # Read an optional regular expression from command line
   REGEXP=$1
-
-  # TODO: this is dangerous, remove!
-  skip_reg=$2
 
   # Process the individual blocks
   while read -r id blocks; do
@@ -2671,13 +2757,13 @@ function recon_histo_all()
       for block in $blocks; do
         # Submit the jobs
         pybatch -N "recon_histo_${id}_${block}" -m 8G -n 8 \
-          $0 recon_histology $id $block $skip_reg
+          $0 -s $SKIPLEVEL -d recon_histology $id $block
       done
     fi
   done < "$MDIR/blockface_src.txt"
 
   # Wait for completion
-  pybatch -w "recon_histo_*"
+  pybatch -w "recon_histo_*" /bin/sleep 0
 }
 
 
@@ -2695,7 +2781,7 @@ function compute_regeval_metrics_all()
 
         # Submit the jobs
         pybatch  "metrics_histo_${id}_${block}" -m 16G \
-          $0 compute_regeval_metrics $id $block
+          $0 -d compute_regeval_metrics $id $block
       done
     fi
   done < "$MDIR/blockface_src.txt"
@@ -2720,7 +2806,7 @@ function compute_regeval_metrics_ihc_all()
         # Submit the jobs
         qsub $QSUBOPT -N "metrics_histo_${id}_${block}" \
           -l h_vmem=16G -l s_vmem=16G \
-          $0 compute_regeval_metrics_ihc $id $block $stain
+          $0 -d compute_regeval_metrics_ihc $id $block $stain
       done
     fi
   done < "$MDIR/blockface_src.txt"
@@ -2864,7 +2950,7 @@ function recon_for_histo_manseg_all()
     # Submit the jobs
     qsub $QSUBOPT -N "recon_manseg_${id}_${block}" \
       -l h_vmem=8G -l s_vmem=8G \
-      $0 recon_for_histo_manseg $id $block
+      $0 -d recon_for_histo_manseg $id $block
 
   done
 
@@ -3279,7 +3365,7 @@ function match_ihc_to_nissl_all()
 
     # Submit the jobs
     pybatch -N "match_nissl_${stain?}_${id}_${block}" -m 8G \
-      $0 match_ihc_to_nissl $id $block $stain $skip_reg
+      $0 -d match_ihc_to_nissl $id $block $stain $skip_reg
 
   done
 
@@ -3300,7 +3386,7 @@ function splat_density_all()
 
     # Submit the jobs
     pybatch -N "splat_${stain?}_${model?}_${id}_${block}" -m 8G \
-      $0 splat_density $id $block $stain $model
+      $0 -d splat_density $id $block $stain $model
 
   done
 
@@ -3315,7 +3401,7 @@ function merge_preproc()
   set_specimen_vars $id
 
   # Extract the orientation into visualizable MRI space
-  itksnap-wt -i $MOLD_WORKSPACE_RES -lpt Viewport -props-get-transform \
+  itksnap-wt -i $MOLD_WORKSPACE_BFDC_RES -lpt Viewport -props-get-transform \
     | grep '3>' | sed -e "s/3> //" \
     > $MOLD_REORIENT_VIS
 
@@ -3422,6 +3508,188 @@ function make_whole_specimen_density_figure()
     -tile 4x1 -geometry +0+0 $SPECIMEN_QCDIR/${id}_${stain}_${model}_montage.png
 }
 
+# Merge Nissl and density maps across all specimens
+function merge_whole_specimen()
+{
+  local id blocks args dummy
+  read -r id args <<< "$@"
+  set_specimen_vars $id
+
+  # Read the blocks
+  read -r dummy blocks <<< "$(grep "^${id}" "$MDIR/blockface_src.txt")"
+
+  # Extract the orientation into visualizable MRI space
+  itksnap-wt -i $MOLD_WORKSPACE_BFDC_RES -lpt Viewport -props-get-transform \
+    | grep '3>' | sed -e "s/3> //" \
+    > $MOLD_REORIENT_VIS
+
+  # Define the target space for final images
+  c3d $MOLD_BINARY $MOLD_MRI_MASK_NATIVESPC \
+    -int 0 -reslice-matrix $MOLD_REORIENT_VIS \
+    -resample-mm 0.2x0.2x0.2mm -trim 20vox -o $HIRES_MRI_VIS_REFSPACE
+
+  # Send the high-res MRI into the vis space
+  greedy -d 3 \
+    -rf $HIRES_MRI_VIS_REFSPACE -rm $HIRES_MRI $HIRES_MRI_VIS \
+    -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP
+
+  # Also send the mask, which is in the mold MRI space, into the vis space
+  greedy -d 3 \
+    -rf $HIRES_MRI_VIS_REFSPACE -rb 4 \
+    -rm $MOLD_CONTOUR $TMPDIR/mold_contour_vis.nii.gz \
+    -r $MOLD_REORIENT_VIS
+  c3d $TMPDIR/mold_contour_vis.nii.gz -thresh -inf 0 1 0 -o $MOLD_MRI_MASK_VIS
+
+  # Files that will store various splat-maps
+  local SM_IHC_OVERLAP_MASK_PATTERN="$TMPDIR/splatmap_${id}_overlap_mask_%s_%s_%s.nii.gz"
+  local SM_IHC_DENSITY_PATTERN="$TMPDIR/splatmap_${id}_density_%s_%s_%s.nii.gz"
+  local SM_IHC_MASK_PATTERN="$TMPDIR/splatmap_${id}_density_mask_%s_%s_%s.nii.gz"
+  local SM_IHC_RGB_PATTERN="$TMPDIR/splatmap_${id}_ihc_rgb_%s_%s_%s.nii.gz"
+
+  local SM_NISSL_PATTERN="$TMPDIR/splatmap_${id}_nissl_rgb_%s.nii.gz"
+  local SM_NISSL_MRI_PATTERN="$TMPDIR/splatmap_${id}_nissl_mri_%s.nii.gz"
+  local SM_NISSL_OVERLAP_MASK_PATTERN="$TMPDIR/splatmap_${id}_nissl_overlap_mask_%s.nii.gz"
+
+  # Remove all splat-maps
+  rm -f "$TMPDIR/splatmap_${id}_*.nii.gz"
+
+  # Loop over the blocks
+  for block in $blocks; do
+    set_block_vars $id $block
+
+    # Create the NISSL splat map
+    local NISSL_BLOCK=$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)
+    local OVERLAP_MASK=$TMPDIR/overlap_mask_${block}.nii.gz
+
+    c3d $NISSL_BLOCK -scale 0 -shift 1 -o $OVERLAP_MASK
+    greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
+        -rm $NISSL_BLOCK $(printf $SM_NISSL_PATTERN $block) \
+        -rm $HIRES_MRI_TO_BFVIS_WARPED $(printf $SM_NISSL_MRI_PATTERN $block) \
+        -rm $OVERLAP_MASK $(printf $SM_NISSL_OVERLAP_MASK_PATTERN $block) \
+        -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $HIRES_TO_BFVIS_INVWARP_FULL
+
+    # Create splat maps for all of the densities and models
+    while read -r stain model args; do
+
+      set_block_density_vars $id $block $stain $model
+
+      if [[ -f $IHC_DENSITY_SPLAT_IMG ]]; then
+
+        c3d $IHC_MASK_SPLAT_IMG -scale 0 -shift 1 -o $OVERLAP_MASK
+
+        greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
+          -rm $OVERLAP_MASK $(printf $SM_IHC_OVERLAP_MASK_PATTERN $stain $model $block) \
+          -rm $IHC_DENSITY_SPLAT_IMG $(printf $SM_IHC_DENSITY_PATTERN $stain $model $block) \
+          -rm $IHC_MASK_SPLAT_IMG $(printf $SM_IHC_MASK_PATTERN $stain $model $block) \
+          -rm $IHC_RGB_SPLAT_IMG $(printf $SM_IHC_RGB_PATTERN $stain $model $block) \
+          -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $HIRES_TO_BFVIS_INVWARP_FULL
+
+      fi
+    done < "$MDIR/density_scaling_vis.txt"
+  done
+
+  # Combine the splat maps
+  mkdir -p $SPECIMEN_SPLAT_DIR
+
+  # Create an overlap mask to normalize NISSL images
+  SM_NISSL_BLOCKS=( $(printf $SM_NISSL_PATTERN "*") )
+  SM_NISSL_MRI_BLOCKS=( $(printf $SM_NISSL_MRI_PATTERN "*") )
+  SM_NISSL_OVERLAP_MASK_BLOCKS=( $(printf $SM_NISSL_OVERLAP_MASK_PATTERN "*") )
+  if [[ ${#SM_NISSL_BLOCKS[*]} -gt 0 ]]; then
+
+    # Create an overlap mask to normalize by
+    local WEIGHTMAP=$TMPDIR/weight_map.nii.gz
+    c3d ${SM_NISSL_OVERLAP_MASK_BLOCKS[*]} \
+      -accum -add -endaccum -clip 1 inf -reciprocal -scale ${#SM_NISSL_BLOCKS[*]} \
+      -o $WEIGHTMAP
+
+    c3d $WEIGHTMAP -popas W -mcs ${SM_NISSL_BLOCKS[*]} \
+      -foreach-comp 3 -mean -push W -times -endfor \
+      -omc $SPECIMEN_NISSL_SPLAT_VIS
+
+    c3d $WEIGHTMAP -popas W ${SM_NISSL_MRI_BLOCKS[*]} \
+      -mean -push W -times \
+      -omc tmp/mrisplat.nii.gz
+
+  fi
+
+  # Create splat maps for all of the densities and models
+  while read -r stain model args; do
+
+    set_block_density_vars $id $block $stain $model
+
+    SM_IHC_OVERLAP_MASK_BLOCKS=( $(printf $SM_IHC_OVERLAP_MASK_PATTERN $stain $model "*") )
+    SM_IHC_DENSITY_BLOCKS=( $(printf $SM_IHC_DENSITY_PATTERN $stain $model "*") )
+    SM_IHC_MASK_BLOCKS=( $(printf $SM_IHC_MASK_PATTERN $stain $model "*") )
+    SM_IHC_RGB_BLOCKS=( $(printf $SM_IHC_RGB_PATTERN $stain $model "*") )
+
+    if [[ ${#SM_IHC_DENSITY_BLOCKS[*]} -gt 0 ]]; then
+
+      # Create an overlap mask to normalize by
+      local WEIGHTMAP=$TMPDIR/weight_map.nii.gz
+      c3d ${SM_IHC_OVERLAP_MASK_BLOCKS[*]} \
+        -accum -add -endaccum -clip 1 inf -reciprocal -scale $N \
+        -o $WEIGHTMAP
+
+      # Combine all the images and scale by the weightmap to normalize for overlap
+      c3d ${SM_IHC_MASK_BLOCKS[*]} -mean $WEIGHTMAP -times -o $SPECIMEN_MASK_SPLAT_VIS
+      c3d ${SM_IHC_DENSITY_BLOCKS[*]} -mean $WEIGHTMAP -times -o $SPECIMEN_DENSITY_SPLAT_VIS
+      c3d $WEIGHTMAP -popas W -mcs ${SM_IHC_RGB_BLOCKS[*]} \
+        -foreach-comp 3 -mean -push W -times -endfor \
+        -type uchar -omc $SPECIMEN_IHC_SPLAT_VIS
+
+      # Apply masked smoothing to these maps (to make up for gaps)
+      c3d $SPECIMEN_MASK_SPLAT_VIS -as M -smooth-fast 2x0.2x0.2mm \
+        -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH -reciprocal -popas MSR \
+        $SPECIMEN_DENSITY_SPLAT_VIS -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times \
+        -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH \
+        -clear -mcs $SPECIMEN_IHC_SPLAT_VIS \
+        -foreach -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times -endfor \
+        -omc $SPECIMEN_IHC_SPLAT_VIS_SMOOTH
+
+      # If the specimen has been warped to the template, apply this warp
+      if [[ -f $TEMPLATE_IV_TO_HIRES_VIS_AFFINE && -f $TEMPLATE_HIRES_WARP && -f $TEMPLATE_IV_HIRES_WARP ]]; then
+
+        # Apply the alignment to the density map and mask
+        greedy -d 3 \
+          -rf $TEMPLATE_IMG \
+          -rm $SPECIMEN_DENSITY_SPLAT_VIS $TEMPLATE_DENSITY_SPLAT \
+          -rm $SPECIMEN_MASK_SPLAT_VIS $TEMPLATE_DENSITY_MASK_SPLAT \
+          -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_IV_TO_HIRES_VIS_AFFINE,-1 $TEMPLATE_IV_HIRES_WARP
+
+      fi
+
+      # Create a merged workspace
+      itksnap-wt \
+        -lsm "$HIRES_MRI_VIS" -psn "9.4T MRI" \
+        -laa "$SPECIMEN_NISSL_SPLAT_VIS" -psn "NISSL recon" -props-set-mcd RGB \
+        -props-set-contrast LINEAR 0 255 \
+        -laa "$SPECIMEN_IHC_SPLAT_VIS" -psn "${stain} recon" -props-set-mcd RGB \
+        -props-set-contrast LINEAR 0 255 \
+        -laa "$SPECIMEN_DENSITY_SPLAT_VIS" \
+        -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+        -psn "${stain} ${model}" \
+        -prs LayerMetaData.Sticky 1 \
+        -laa "$SPECIMEN_MASK_SPLAT_VIS" -psn "Recon mask" \
+        -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
+
+      # Do the same for the template space
+      itksnap-wt \
+        -lsm "$TEMPLATE_HIRES_RESLICED" -psn "9.4T MRI" \
+        -laa "$TEMPLATE_DENSITY_SPLAT" \
+        -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+        -psn "${stain} ${model}" \
+        -prs LayerMetaData.Sticky 1 \
+        -laa "$TEMPLATE_DENSITY_MASK_SPLAT" -psn "Recon mask" \
+        -o $TEMPLATE_DENSITY_SPLAT_WORKSPACE
+
+      # Generate a figure for paper
+      make_whole_specimen_density_figure $id $stain $model
+
+      fi
+
+  done < "$MDIR/density_scaling_vis.txt"
+}
 
 function merge_splat()
 {
@@ -3554,7 +3822,7 @@ function merge_preproc_all()
     # Submit the jobs
     qsub $QSUBOPT -N "mergepre_${id}" \
       -l h_vmem=16G -l s_vmem=16G \
-      $0 merge_preproc $id
+      $0 -d merge_preproc $id
 
   done
 
@@ -3564,179 +3832,24 @@ function merge_preproc_all()
 
 
 
-function merge_splat_all()
-{
-  # Read required and optional parameters
-  read -r stain model REGEXP args <<< "$@"
-
-  # Process the individual blocks
-  cat $MDIR/moldmri_src.txt | grep "$REGEXP" | while read -r id args; do
-
-    # Submit the jobs
-    qsub $QSUBOPT -N "merge_${stain?}_${model?}_${id}" \
-      -l h_vmem=16G -l s_vmem=16G \
-      $0 merge_splat $id $stain $model
-
-  done
-
-  # Wait for completion
-  qsub $QSUBOPT -b y -sync y -hold_jid "merge_${stain}_${model}*" /bin/sleep 0
-}
-
-
-# Generic function to download an SVG from PHAS and convert it to a PNG
-# usage:
-#   download_svg <task_id> <svs> <wdir>
-# environment variables:
-#   SVG_CURL_OPTS: options to pass curl
-function download_svg()
-{
-  local task_id svs WDIR TS_URL TS_REMOTE_JSON_COPY TS_REMOTE
-  local LOCAL_SVG LOCAL_PNG LOCAL_TIMESTAMP_JSON
-
-  # Read the inputs
-  read -r task_id svs WDIR <<< "$@"
-
-  # Get the timestamp of the annotation
-  TS_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/timestamp"
-  TS_REMOTE_JSON_COPY=$TMPDIR/${svs}_remote_ts.json
-  if ! curl_cat_url "$TS_URL" > $TS_REMOTE_JSON_COPY; then
-    echo "Unable to download $TS_URL"
-    return
-  fi
-
-  # Read the timestamp
-  TS_REMOTE=$(jq .timestamp < $TS_REMOTE_JSON_COPY)
-
-  # The different filenames that will be output by this function
-  LOCAL_SVG=$WDIR/${svs}_annot.svg
-  LOCAL_PNG=$WDIR/${svs}_annot.png
-  LOCAL_TIMESTAMP_JSON=$WDIR/${svs}_timestamp.json
-
-  # If there is nothing on the server, clean up locally and stop
-  if [[ $TS_REMOTE == "null" ]]; then
-    rm -f $LOCAL_SVG $LOCAL_TIMESTAMP_JSON $LOCAL_PNG
-    return
-  fi
-
-  # Does the SVG exist? Then check if it is current
-  if [[ -f $LOCAL_SVG ]]; then
-    local TS_LOCAL
-    if [[ -f $LOCAL_TIMESTAMP_JSON ]]; then
-      TS_LOCAL=$(cat $LOCAL_TIMESTAMP_JSON | jq .timestamp)
-    else
-      TS_LOCAL=0
-    fi
-
-    if [[ $(echo "$TS_REMOTE > $TS_LOCAL" | bc) -eq 1 ]]; then
-      rm -f $LOCAL_SVG
-    else
-      echo "File $LOCAL_SVG is up to date"
-    fi
-  fi
-
-  if [[ ! -f $LOCAL_SVG ]]; then
-    # Download the SVG
-    local SVG_URL="$PHAS_SERVER/api/task/$task_id/slidename/$svs/annot/svg"
-    if ! curl_download_url "$SVG_URL" "$LOCAL_SVG" "$SVG_CURL_OPTS"; then
-      echo "Unable to download $LOCAL_SVG"
-      return
-    fi
-
-    # Record the timestamp
-    echo $TS_REMOTE_JSON > $LOCAL_TIMESTAMP_JSON
-
-    # Make sure the PNG gets generated
-    rm -f $LOCAL_PNG
-  fi
-
-  # Now that we have the SVG, convert it to PNG format. No need to fix it
-  # to a given size, that will happen later during splatting
-  if [[ ! -f $LOCAL_PNG ]]; then
-
-    # Convert SVG to PNG
-    convert -density 2 -depth 8 $LOCAL_SVG \
-      -set colorspace Gray -separate -average -negate \
-      $LOCAL_PNG
-
-  fi
-}
-
-
-# Get the slide annotations in SVG format from the server and map them to a
-# format that can be used during annotation
-function rsync_histo_annot()
-{
-  # What specimen and block are we doing this for?
-  read -r id block args <<< "$@"
-
-  # Set the block variables
-  set_block_vars $id $block
-
-  # Create directories
-  mkdir -p $HISTO_ANNOT_DIR $HISTO_REGEVAL_DIR
-
-  # Read the slide manifest
-  while IFS=, read -r svs stain dummy section slice args; do
-
-    # Set the variables
-    set_ihc_slice_vars $id $block $svs $stain $section $slice $args
-
-    # Get the registration evaluation annotations
-    SVG_CURL_OPTS="-d strip_width=1000"
-    download_svg $PHAS_REGEVAL_TASK $svs $HISTO_REGEVAL_DIR
-
-    # Remove the cleaned annotation
-    rm -rf $SLIDE_REGEVAL_CLEAN_PNG
-
-    # Apply a cleaning operation to these downloads
-    if [[ -f $SLIDE_REGEVAL_PNG ]]; then
-
-      # Check if the PNG is empty
-      local VSUM=$(c2d $SLIDE_REGEVAL_PNG -voxel-sum | awk '{print $3}')
-      if [[ $VSUM != "0" ]]; then
-        c2d $SLIDE_REGEVAL_PNG \
-          -as X -thresh 0 17 1 0 -push X -thresh 18 59 1 0 -push X -thresh 60 inf 1 0 \
-          -foreach -smooth 2mm -endfor -vote -replace 0 0 1 34 2 85 \
-          -type uchar -o $SLIDE_REGEVAL_CLEAN_PNG
-      else
-        echo "Empty annotation $SLIDE_REGEVAL_PNG"
-      fi
-    fi
-
-    # Some slides contain no data (oddly)
-
-
-    # Anatomical annotation is performed only on NISSL slides
-    if [[ $stain != "NISSL" ]]; then continue; fi
-
-    # Download the SVG with appropriate settings
-    SVG_CURL_OPTS="-d stroke_width=250 -d font_size=2000px -d font_color=darkgray"
-    download_svg $PHAS_ANNOT_TASK $svs $HISTO_ANNOT_DIR
-
-  done < $HISTO_MATCH_MANIFEST
-}
-
-function rsync_histo_annot_all()
+function merge_whole_specimen_all()
 {
   # Read an optional regular expression from command line
   REGEXP=$1
 
   # Process the individual blocks
-  grep "$REGEXP" "$MDIR/blockface_param.txt" | while read -r id block args; do
-
-    # Pull the histology manifest (no need for qsubbing)
-    pull_histo_match_manifest $id $block
-
-    # Better to run sequentially to reduce server load
-    ### pybatch -N "rsync_histo_annot_${id}_${block}" \
-    rsync_histo_annot $id $block
-
-  done
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      # Submit the jobs
+      pybatch -N "merge_${id}" -m 16G -n 4 \
+        "$0" merge_whole_specimen $id
+    fi
+  done < "$MDIR/blockface_src.txt"
 
   # Wait for completion
-  ### pybatch -w "rsync_histo_annot_*"
+  pybatch -w "merge_*" /bin/sleep 1
 }
+
 
 # Generate some final QC for a block
 function block_final_qc()
@@ -3829,7 +3942,7 @@ function block_final_qc_all()
 
     # Submit the jobs
     pybatch -N "block_final_qc_${id}_${block}" -m 16G \
-      $0 block_final_qc $id $block
+      $0 -d block_final_qc $id $block
 
   done
 
@@ -3989,7 +4102,7 @@ function build_basic_template()
 
   # Perform initial reslicing
   for id in $TIDS; do
-    pybatch -N "tempinit_${id}" $0 template_initial_reslice $id
+    pybatch -N "tempinit_${id}" $0 -d template_initial_reslice $id
   done
   pybatch -w "tempinit_*"
 
@@ -3997,12 +4110,12 @@ function build_basic_template()
   for ((iter=0;iter<=$NITER;iter++)); do
 
     # Compute the average
-    pybatch -N "tempavg_${iter}" -m 16G $0 template_make_average ${iter}
+    pybatch -N "tempavg_${iter}" -m 16G $0 -d template_make_average ${iter}
     pybatch -w "tempavg_${iter}"
 
     # Perform registrations
     for id in $TIDS; do
-      pybatch -N "tempreg_${id}" -m 8G $0 template_register_and_reslice $id $((iter==NITER))
+      pybatch -N "tempreg_${id}" -m 8G $0 -d template_register_and_reslice $id $((iter==NITER))
     done
     pybatch -w "tempreg_*"
 
@@ -4211,12 +4324,95 @@ function eval_block_var()
   eval_var ${3?}
 }
 
+# Generic function to export a workspace
+function export_workspace()
+{
+  local ws destdir wsnew nlayers fn_raw fn_new
+  read -r ws destdir <<< "$@"
+
+  # Copy the workspace
+  mkdir -p $destdir
+  cp -av "$ws" "$destdir"/
+  wsnew="$destdir"/$(basename "$ws")
+
+  nlayers=$(itksnap-wt -i "$wsnew" -ll | tail -n +2 | wc -l)
+  for ((i=0;i<nlayers;i++)); do
+    fn_raw=$(itksnap-wt -i "$wsnew" -lp $i -P -pgf)
+    fn_new="$destdir"/$(basename "$fn_raw")
+    itksnap-wt -i "$wsnew" -lp $i -props-rename-file "$fn_new" -o "$wsnew"
+    echo "$fn_raw" "->" "$fn_new"
+  done
+}
+
+# Export annotation workspace for 3D segmentation
+function export_annot_workspaces_all()
+{
+  # Read an optional regular expression from command line
+  DESTDIR=${1?}
+  REGEXP=$2
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      # Perform the export
+      for b in $blocks; do
+        set_block_vars $id $b
+        pybatch -N "export_aws_${id}_${b}" \
+          "$0" export_workspace $HISTO_NISSL_BASED_MRI_SEGMENTATION_WORKSPACE $DESTDIR/${id}_${b}
+      done
+    fi
+  done < "$MDIR/blockface_src.txt"
+
+  # Wait for completion
+  pybatch -w "export_aws_*" /bin/sleep 1
+}
 
 
 function main()
 {
   echo "Please specify a command"
 }
+
+function usage()
+{
+  echo "recon.sh : Histology to MRI reconstruction script for R01-AG056014"
+  echo "Usage:"
+  echo "  recon.sh [options] <function> [args]"
+  echo "Options:"
+  echo "  -d            : Turn on command echoing (for debugging)"
+  echo "  -s <level>    : Skip expensive operations if results exist"
+  echo "Primary functions:"
+  echo "  check_specimen_inputs <id>                  : Check inputs for specimen"
+  echo "  check_specimen_results <id>                 : Check results of each stage for specimen"
+  echo "  process_mri_all <regex>                     : Match 7T to 9.4T MRI"
+  echo "  recon_blockface_dc_all <regex>              : Reconstruct blockface in 3D"
+  echo "  match_blockface_to_mri_initial_all <regex>  : Rough blockface/MRI matching"
+  echo "  register_bfdc_to_mri_all <regex>            : Careful blockface/MRI matching"
+  echo "  preproc_histology_all <regex>               : Nissl masking"
+  echo "  recon_histo_all <regex>                     : Nissl to MRI registration"
+  echo "  match_ihc_to_nissl_all <regex> <stain>      : IHC to Nissl registration"
+  echo "  merge_preproc_all <regex>                   : Merge blocks in whole-MRI space"
+}
+
+# Read the command-line options
+while getopts "dhs:" opt; do
+  case $opt in
+    d) set -x;;
+    h) usage; exit 0;;
+    s) SKIPLEVEL=$OPTARG;;
+    \?) echo "Unknown option $OPTARG"; exit 2;;
+    :) echo "Option $OPTARG requires an argument"; exit 2;;
+  esac
+done
+
+# Get remaining args
+shift $((OPTIND - 1))
+
+# No parameters? Show usage
+if [[ "$#" -lt 1 ]]; then
+  usage
+  exit 255
+fi
 
 # Main entrypoint into script
 COMMAND=$1

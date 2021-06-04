@@ -1,0 +1,39 @@
+{
+  "inputs": [
+    {
+      "name": "Hires MRI",
+      "display": "grayscale",
+      "edges": true,
+      "reference": true
+    },
+    {
+      "name": "Nissl (Warped)",
+      "display": "RGB"
+    },
+    {
+      "name": "Nissl (Affine)",
+      "display": "RGB"
+    },
+    {
+      "name": "Nissl MRI-like (Warped)",
+      "display": "grayscale"
+    },
+    {
+      "name": "Nissl MRI-like (Affine)",
+      "display": "grayscale"
+    },
+    {
+      "name": "Blockface",
+      "display": "RGB"
+    }
+  ],
+  "slicing": {
+    "axis" : "z",
+    "positions" : [ "20%", "40%", "60%", "80%" ]
+  },
+  "grid": {
+    "opacity": 0.5,
+    "color": "lightgreen",
+    "spacing": "10"
+  }
+}

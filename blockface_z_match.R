@@ -124,7 +124,7 @@ res.flip=constrOptim(theta=c(zoff_init, 1.0, rep(0.5, N-1)), f=objfun, method="N
                 ui=ui, ci=ci, control=list(maxit=5000))
 
 # Select which result to use
-if(opt$flip < 0 || (flip==0 && res.noflip$value < res.flip$value )) {
+if(opt$flip < 0 || (opt$flip==0 && res.noflip$value > res.flip$value )) {
   res = res.flip
   flip = -1
   print(paste("Using z-flipped result: rho = ", 1 - res.flip$value))

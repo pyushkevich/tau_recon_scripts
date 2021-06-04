@@ -18,6 +18,7 @@ for fn in $(cat $ROOT/manifest/hiresmri_src.txt | awk '{print $1}'); do
   #echo $fnsrc
   ML=$(find $SRC/preproc -name "${fnsrc}*_axisalign_phgsegshape_multilabel.nii.gz")
   MAT=$(find $SRC/inputs -name "${fnsrc}*_raw_to_axisalign.mat")
+  SRLM=$(find $SRC/inputs -name "${fnsrc}*_axisalign_srlm_sr.nii.gz")
 
   #echo $ML
   #echo $MAT
@@ -31,11 +32,16 @@ for fn in $(cat $ROOT/manifest/hiresmri_src.txt | awk '{print $1}'); do
     cp $CP_OPTS $ML $DEST_NII
     cp $CP_OPTS $MAT $DEST_MAT
 
+    # Same for SRLM
+    if [[ -f $SRLM ]]; then
+      DEST_SRLM=$WDIR/${fn}_srlm_seg.nii.gz
+      cp $CP_OPTS $SRLM $DEST_SRLM
+    fi
+
   else
 
     echo "MISSING FILES FOR $fn"
 
   fi
 
-
-  done
+done

@@ -95,7 +95,9 @@ if [[ $MODE == "SLURM" ]]; then
 elif [[ $MODE == "LSF" ]]; then
 
   if [[ $WAITPATTERN ]]; then
-    bsub -K -w "${WAITPATTERN}" /bin/sleep 30
+    # bsub -K -w "${WAITPATTERN}" /bin/sleep 30
+    echo "Waiting for jobs ${WAITPATTERN} to complete..."
+    bwait -w "ended(${WAITPATTERN})"
   else
     if [[ $MEMORY ]]; then
       MEMCMD="-M $MEMORY"

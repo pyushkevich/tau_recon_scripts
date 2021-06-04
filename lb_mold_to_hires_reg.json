@@ -1,0 +1,33 @@
+{
+  "inputs": [
+    {
+      "name": "9.4T MRI",
+      "display": "grayscale",
+      "edge_color": "red",
+      "edges": true
+    },
+    {
+      "name": "7T MRI",
+      "display": "grayscale",
+      "edge_color": "red"
+    },
+    {
+      "name": "7T MRI",
+      "display": "grayscale",
+      "reference": true,
+      "hidden": true
+    }
+  ],
+  "slicing": {
+    "axis" : "y",
+    "positions" : [ "20%", "40%", "60%", "80%" ]
+  },
+  "grid": {
+    "opacity": 0.5,
+    "color": "lightgreen",
+    "spacing": "10"
+  },
+  "layout": {
+    "transpose": true
+  }
+}

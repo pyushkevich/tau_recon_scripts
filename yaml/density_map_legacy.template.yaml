@@ -14,16 +14,9 @@ spec:
             secretName: gse-key
       containers:
       - name: my-gpu-container-torch
-        image: pyushkevich/tangle-cnn-prod
+        image: pyushkevich/tangle-cnn-prod:legacy2020
         command: ["/bin/bash"]
-        args: ["wildcat_analyze_wsi.sh",
-               "-s", "%INPUT%",
-               "-n", "%NETWORK%",
-               "-o", "%OUTPUT%",
-               "-p", "cfn-cluster-test",
-               "-k", "/var/secrets/google/key.json",
-               "-W", "1536",
-               "-D", "%DOWNSAMPLE%"]
+        args: ["process_slide_full.sh", "cfn-cluster-test", "%ID%", "%SVS%", "%STAIN%", "%MODEL%"]
         resources:
           limits:
             nvidia.com/gpu: 1
