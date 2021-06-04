@@ -1,6 +1,6 @@
 # WildCat Classifier Training and Application
 
-The classifier is used for tangle detection and burden mapping on whole-slide images. This document describes how to train and apply the classifier.
+The [*WildCat*](https://github.com/durandtibo/wildcat.pytorch) weakly supervised learning algorithm is used for tangle (and other object) detection and burden mapping on whole-slide histology images. This document describes how to train and apply WildCat.
 
 * [*PICSL Histology Annotation Server (PHAS)*](https://github.com/pyushkevich/histoannot) is used to place training samples.
   * We assume your PHAS server is accessible at `https://my.histoannot.url`
@@ -106,7 +106,9 @@ A training task involves classifying a set of foreground objects vs. a set of ba
    
        $PATCH_ROOT/patches/exp01/patches/<train|val|test>/<tangle|nontangle>/12345.png
        
-## Train WildCat classifier
+## Train WildCat classifier in Jupyter
+
+*Alternatively, you can train the classifier from the command line, see below*
 
 1. Start the Jupyter notebook app 
 
@@ -158,8 +160,41 @@ This step is also optional and will take longer. It allows you to explore whole-
      ![](img/wildcat_burden_example.png)
 
 
-## Training WildCat network for production mode
+## Validate WildCat classifier vs. Manual Ratings and Object Counts
 
+Follow these instructions if you would like to compare the quantitative burden measure to manual counts of objects of interest (e.g., tangle counts), and subjective ratings. In the histology annotation platform, set up a new task, as shown below. Large boxes are used to designate areas for validation. They can be assigned labels corresponding to ratings. Small boxes are used to mark all individual inclusions of each type that are being counted.
+   
+   ![](img/wildcat_counting_example.png)
+
+When you are ready to perform the evaluation:
+
+1. Clone the samples into the directory `$PATCH_ROOT`. Set `CTID` to the counting task id. Note the -X flag, which will download patches in the size drawn as opposed to default 512x512 patches previously cloned.
+
+        clone_samples.sh -s https://my.histoannot.url -k ~/.histoannot_key.json -t $CTID -o $PATCH_ROOT/counting -X
+        
+2. Duplicate, edit and run the notebook `generic-wcu-counts.ipynb`. 
+
+3. You will need to set `exp_dir` to the directory where you performed WildCat training, and `cnt_dir` to `$PATCH_ROOT/counting`. You will also need to set the dictionaries `container_labels` and `objects_of_interest_labels` to match the labels used to mark large boxes and individual inclusions that should be included in the counting. Towards the end of the notebook, you will need to set `box_labels` to indicate your rating categories for the large boxes.
+
+
+## Training WildCat network from the command line
+
+1. Clone the repo [https://github.com/pyushkevich/tangle-cnn-prod](https://github.com/pyushkevich/tangle-cnn-prod)
+
+2. Install required packages 
+
+        pip -r requirements.txt
+
+3. Run training script as follows
+
+        # Run this to see all options for training
+        python wildcat_main.py train --help 
+        
+        # Run this to run with the default options
+        python wildcat_main.py train \
+           --expdir $PATCH_ROOT/patches/exp01
+           
+   The script will create a directory `$PATCH_ROOT/patches/exp01/models` containing your trained classifier
 
 
 ## Applying WildCat models in batch mode
