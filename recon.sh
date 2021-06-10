@@ -4,23 +4,23 @@
 # ====================================
 # This script contains the following top-level commands:
 #
-# rsync_histo_all [RE]                    Pull features/densities (PY2)
-# rsync_histo_annot_all [RE]              Pull annotations
-# preproc_histology_all [RE]              Generate RGB masks (needed?)
+# rsync_histo_all [RE]                          Pull features/densities (PY2)
+# rsync_histo_annot_all [RE]                    Pull annotations
+# preproc_histology_all [RE]                    Generate RGB masks (needed?)
 #
-# recon_blockface_all [RE]                Blockface to 3D volume
-# process_mri_all [RE]                    MRI 7T to 9.4T
-# register_blockface_all [RE]             MRI to blockface
-# recon_histo_all [RE] [skip_reg]         Histology recon and splatting
+# recon_blockface_all [RE]                      Blockface to 3D volume
+# process_mri_all [RE]                          MRI 7T to 9.4T
+# register_blockface_all [RE]                   MRI to blockface
+# recon_histo_all [RE] [skip_reg]               Histology recon and splatting
 #
-# compute_regeval_metrics_all [RE]        Compute registration metrics
+# compute_regeval_metrics_all [RE]              Compute registration metrics
 #
-# match_ihc_to_nissl_all <stain> [RE]     Match tau, etc to NISSL
-# splat_density_all <stain> <model> [RE]  Generate block density maps
+# match_ihc_to_nissl_all <stain> [RE]           Match tau, etc to NISSL
+# splat_density_all <stain> <model> <con> [RE]  Generate block density maps
 #
-# merge_preproc_all [RE]                  Prepare to splat to specimen MRI space
-# build_basic_template                    Build a template from all specimens
-# merge_splat_all <stain> <model> [RE]    Splat to specimen MRI space and template space
+# merge_preproc_all [RE]                        Prepare to splat to specimen MRI space
+# build_basic_template                          Build a template from all specimens
+# merge_splat_all <stain> <model> [RE]          Splat to specimen MRI space and template space
 
 # Read local configuration
 # shellcheck source=src/common.sh
@@ -230,28 +230,36 @@ function set_specimen_density_vars()
   local tracestate=$(shopt -po xtrace); set +x
 
   # Read the parameters
-  local id stain model args
-  read -r id stain model args <<< "$@"
+  local id stain model contrast args
+  read -r id stain model contrast args <<< "$@"
+
+  # Suffix for stain/model/contrast combo
+  local SUFFIX
+  if [[ $contrast == "main" ]]; then
+    SUFFIX="${stain}_${model}"
+  else
+    SUFFIX="${stain}_${model}_${contrast}"
+  fi
 
   # Splat for the current density in vis space
-  SPECIMEN_DENSITY_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.nii.gz
-  SPECIMEN_MASK_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_mask_${stain}_${model}.nii.gz
+  SPECIMEN_DENSITY_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_density_${SUFFIX}.nii.gz
+  SPECIMEN_MASK_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_mask_${SUFFIX}.nii.gz
   SPECIMEN_IHC_SPLAT_VIS=${SPECIMEN_SPLAT_DIR}/${id}_rgb_${stain}.nii.gz
 
   # Splat for the current density in vis space with smoothing (no gaps)
-  SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_density_sm_${stain}_${model}.nii.gz
-  SPECIMEN_MASK_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_mask_sm_${stain}_${model}.nii.gz
+  SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_density_sm_${SUFFIX}.nii.gz
+  SPECIMEN_MASK_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_mask_sm_${SUFFIX}.nii.gz
   SPECIMEN_IHC_SPLAT_VIS_SMOOTH=${SPECIMEN_SPLAT_DIR}/${id}_rgb_sm_${stain}.nii.gz
 
   # The workspace with that
-  SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}.itksnap
+  SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${SUFFIX}.itksnap
 
   # Maps in template space
-  TEMPLATE_DENSITY_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_template_density_${stain}_${model}.nii.gz
-  TEMPLATE_DENSITY_MASK_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_template_density_mask_${stain}_${model}.nii.gz
+  TEMPLATE_DENSITY_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_template_density_${SUFFIX}.nii.gz
+  TEMPLATE_DENSITY_MASK_SPLAT=${SPECIMEN_SPLAT_DIR}/${id}_template_density_mask_${SUFFIX}.nii.gz
 
   # The workspace with that
-  TEMPLATE_DENSITY_SPLAT_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${stain}_${model}_tempspace.itksnap
+  TEMPLATE_DENSITY_SPLAT_WORKSPACE=${SPECIMEN_SPLAT_DIR}/${id}_density_${SUFFIX}_tempspace.itksnap
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -513,10 +521,19 @@ function set_block_density_vars()
   # Set block variables
   set_block_stain_vars $id $block $stain
 
+  # For backward compatibility reasons, we don't add the contrast if it's the main
+  # contrast for the model
+  if [[ $contrast == "main" ]]; then
+    IHC_DENSITY_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_${model}
+  else
+    IHC_DENSITY_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_${model}_${contrast}
+  fi
+
   # Splatted densities (patterns)
-  IHC_DENSITY_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_${model}
   IHC_DENSITY_SPLAT_MANIFEST=${IHC_DENSITY_SPLAT_BASENAME}_manifest.txt
   IHC_DENSITY_SPLAT_IMG=${IHC_DENSITY_SPLAT_BASENAME}.nii.gz
+  IHC_DENSITY_MASK_SPLAT_MANIFEST=${IHC_DENSITY_SPLAT_BASENAME}_mask_manifest.txt
+  IHC_DENSITY_MASK_SPLAT_IMG=${IHC_DENSITY_SPLAT_BASENAME}_mask.nii.gz
   IHC_DENSITY_SPLAT_WORKSPACE=${IHC_DENSITY_SPLAT_BASENAME}.itksnap
 
   IHC_DENSITY_SPLAT_IMG_TOHIRES=${IHC_DENSITY_SPLAT_BASENAME}_tohires.nii.gz
@@ -673,17 +690,28 @@ function set_ihc_slice_vars()
 function set_ihc_slice_density_vars()
 {
   # Read the density map parameters
-  read -r svs stain model args <<< "$@"
+  read -r svs stain model contrast args <<< "$@"
 
   # Histology density map (rsynced from cloud)
   SLIDE_DENSITY_MAP=$SLIDE_LOCAL_DENSITY_DIR/${svs}_${stain}_${model}_densitymap.nii.gz
 
+  # For backward compatibility reasons, we don't add the contrast if it's the main
+  # contrast for the model
+  if [[ $contrast == "main" ]]; then
+    sdmbase=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME?}_${model}
+  else
+    sdmbase=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME?}_${model}_${contrast}
+  fi
+
   # Thresholded density map
-  local sdmbase=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME?}_${model}
   SLIDE_DENSITY_MAP_THRESH=${sdmbase}_densitymap_thresh.nii.gz
 
-  # Density map in NISSL psace
+  # Density map in NISSL space
   SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING=${sdmbase}_densitymap_thresh_to_nissl.nii.gz
+
+  # Binary image (all 1) corresponding to the above, used for splatting a mask that indicates the
+  # presense or absence of a contrast
+  SLIDE_DENSITY_MAP_TO_NISSL_MASK=${sdmbase}_densitymap_to_nissl_mask.nii.gz
 }
 
 # Check a single file
@@ -3280,15 +3308,24 @@ function match_ihc_to_nissl()
   fi
 }
 
+# Get density parameters via jq
+function density_param()
+{
+  jq -r "$@" "$MDIR/density_param.json"
+}
+
 # Generate the tau splat images
 function splat_density()
 {
+  local id block stain model contrast args
+  local DENSITY_SLIDE_NISSL_SPACE
+
   # What specimen and block are we doing this for?
-  read -r id block stain model args <<< "$@"
+  read -r id block stain model contrast args <<< "$@"
 
   # Set the block variables
   set_block_vars $id $block
-  set_block_density_vars $id $block $stain $model
+  set_block_density_vars $id $block $stain $model $contrast
 
   # Create output directory
   mkdir -p $IHC_TO_NISSL_DIR
@@ -3299,6 +3336,10 @@ function splat_density()
   # Create output directory
   mkdir -p $HISTO_DENSITY_DIR
 
+  # Read the weights and other parameters for this contrast
+  CONTRAST_WEIGHTS=$(density_param ".$stain.$model.contrasts.$contrast.weights[]")
+  CONTRAST_SOFTMAX=$(density_param ".$stain.$model.contrasts.$contrast.softmax // 0")
+
   # Read individual slides
   while IFS=, read -r svs slide_stain dummy section slice args; do
 
@@ -3307,7 +3348,7 @@ function splat_density()
 
     # Set the variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
-    set_ihc_slice_density_vars $svs $stain $model
+    set_ihc_slice_density_vars $svs $stain $model $contrast
 
     # Find the matching NISSL slide
     find_nissl_slide $section
@@ -3315,21 +3356,39 @@ function splat_density()
     # Does the tangle density exist
     if [[ $MATCHED_NISSL_SVS && -f $SLIDE_DENSITY_MAP ]]; then
 
+      # For some contrasts, we perform softmax
+      local SOFTMAX_CMD=""
+      if [[ $CONTRAST_SOFTMAX != "0" ]]; then
+        SOFTMAX_CMD="-scale $CONTRAST_SOFTMAX -softmax "
+      fi
+
       # Apply post-processing to density map
-      c2d -mcs $SLIDE_DENSITY_MAP -scale -1 -add -scale -1 -clip 0 inf \
+      c2d -mcs $SLIDE_DENSITY_MAP $SOFTMAX_CMD -wsum $CONTRAST_WEIGHTS -clip 0 inf \
         -smooth-fast 0.2mm -resample-mm 0.02x0.02mm \
         -o $SLIDE_DENSITY_MAP_THRESH
 
-      # Apply the registration to the density map. TODO: in the future we should
-      # compose warps instead, but for now this is ok, especially considering we
-      # are smoothing these maps
+      # For NISSL-derived density maps, we skip registration
+      if [[ $stain != "NISSL" ]]; then
+        # Apply the registration to the density map. TODO: in the future we should
+        # compose warps instead, but for now this is ok, especially considering we
+        # are smoothing these maps
 
-      # Reslice using the chunking warp
-      chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_DENSITY_MAP_THRESH $SLIDE_RGB \
-        $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING 0
+        # Reslice using the chunking warp
+        chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_DENSITY_MAP_THRESH $SLIDE_RGB \
+          $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING 0
 
-      echo $MATCHED_NISSL_SVS $SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING \
-        >> $IHC_DENSITY_SPLAT_MANIFEST
+        DENSITY_SLIDE_NISSL_SPACE=$SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING
+
+      else
+        DENSITY_SLIDE_NISSL_SPACE=$SLIDE_DENSITY_MAP_THRESH
+      fi
+
+      # Generate a mask image (all ones over the slide)
+      c2d $DENSITY_SLIDE_NISSL_SPACE -scale 0 -shift 1 -type uchar -o $SLIDE_DENSITY_MAP_TO_NISSL_MASK
+
+      # Add to manifests
+      echo $MATCHED_NISSL_SVS $DENSITY_SLIDE_NISSL_SPACE >> $IHC_DENSITY_SPLAT_MANIFEST
+      echo $MATCHED_NISSL_SVS $SLIDE_DENSITY_MAP_TO_NISSL_MASK >> $IHC_DENSITY_MASK_SPLAT_MANIFEST
 
     fi
 
@@ -3340,12 +3399,26 @@ function splat_density()
     voliter-20 $IHC_DENSITY_SPLAT_IMG \
     "-ztol 0.2 -si 3.0 -rb 0 -xy 0.05"
 
+  # Splat the density mask as well
+  splat_block $id $block $IHC_DENSITY_MASK_SPLAT_MANIFEST \
+    voliter-20 $IHC_DENSITY_MASK_SPLAT_IMG \
+    "-ztol 0.2 -si 3.0 -rb 1 -xy 0.05"
+
   # Generate a workspace for examining results
   itksnap-wt \
     -lsm "$(printf $HISTO_NISSL_RGB_SPLAT_PATTERN voliter-20)" \
     -psn "NISSL" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
-    -laa $IHC_RGB_SPLAT_IMG \
-    -psn "$stain" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+    -o $IHC_DENSITY_SPLAT_WORKSPACE
+
+  # Only for non-NISSL stains
+  if [[ $stain != "NISSL" ]]; then
+    itksnap-wt -i $IHC_DENSITY_SPLAT_WORKSPACE \
+      -laa $IHC_RGB_SPLAT_IMG \
+      -psn "$stain" -props-set-contrast LINEAR 0.5 1.0 -props-set-mcd rgb \
+      -o $IHC_DENSITY_SPLAT_WORKSPACE
+  fi
+
+  itksnap-wt -i $IHC_DENSITY_SPLAT_WORKSPACE \
     -laa $IHC_DENSITY_SPLAT_IMG \
     -psn "$stain $model density" -props-set-colormap hot \
     -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
@@ -3376,22 +3449,21 @@ function match_ihc_to_nissl_all()
 function splat_density_all()
 {
   # Read required and optional parameters
-  read -r stain model REGEXP args <<< "$@"
+  read -r stain model contrast REGEXP args <<< "$@"
 
   # Process the individual blocks
-  cat $MDIR/blockface_param.txt | grep "$REGEXP" | while read -r id block args; do
-
-    # Create the manifest for this block
-    pull_histo_match_manifest $id $block
-
-    # Submit the jobs
-    pybatch -N "splat_${stain?}_${model?}_${id}_${block}" -m 8G \
-      $0 -d splat_density $id $block $stain $model
-
-  done
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      for block in $blocks; do
+        # Submit the jobs
+        pybatch -N "splat_${stain?}_${model?}_${contrast?}_${id}_${block}" -m 8G \
+          $0 -d splat_density $id $block $stain $model $contrast
+      done
+    fi
+  done < "$MDIR/blockface_src.txt"
 
   # Wait for completion
-  pybatch -w "splat_${stain}_${model}*"
+  pybatch -w "splat_${stain}_${model}_${contrast}_*"
 }
 
 # Preparatory steps for merging the per-block maps into a whole-MTL map
@@ -3517,7 +3589,7 @@ function merge_whole_specimen()
 
   # Read the blocks
   read -r dummy blocks <<< "$(grep "^${id}" "$MDIR/blockface_src.txt")"
-
+<<'SKIPPP'
   # Extract the orientation into visualizable MRI space
   itksnap-wt -i $MOLD_WORKSPACE_BFDC_RES -lpt Viewport -props-get-transform \
     | grep '3>' | sed -e "s/3> //" \
@@ -3539,12 +3611,13 @@ function merge_whole_specimen()
     -rm $MOLD_CONTOUR $TMPDIR/mold_contour_vis.nii.gz \
     -r $MOLD_REORIENT_VIS
   c3d $TMPDIR/mold_contour_vis.nii.gz -thresh -inf 0 1 0 -o $MOLD_MRI_MASK_VIS
+SKIPPP
 
   # Files that will store various splat-maps
-  local SM_IHC_OVERLAP_MASK_PATTERN="$TMPDIR/splatmap_${id}_overlap_mask_%s_%s_%s.nii.gz"
-  local SM_IHC_DENSITY_PATTERN="$TMPDIR/splatmap_${id}_density_%s_%s_%s.nii.gz"
-  local SM_IHC_MASK_PATTERN="$TMPDIR/splatmap_${id}_density_mask_%s_%s_%s.nii.gz"
-  local SM_IHC_RGB_PATTERN="$TMPDIR/splatmap_${id}_ihc_rgb_%s_%s_%s.nii.gz"
+  local SM_IHC_OVERLAP_MASK_PATTERN="$TMPDIR/splatmap_${id}_overlap_mask_%s_%s_%s_%s.nii.gz"
+  local SM_IHC_DENSITY_PATTERN="$TMPDIR/splatmap_${id}_density_%s_%s_%s_%s.nii.gz"
+  local SM_IHC_MASK_PATTERN="$TMPDIR/splatmap_${id}_density_mask_%s_%s_%s_%s.nii.gz"
+  local SM_IHC_RGB_PATTERN="$TMPDIR/splatmap_${id}_ihc_rgb_%s_%s_%s_%s.nii.gz"
 
   local SM_NISSL_PATTERN="$TMPDIR/splatmap_${id}_nissl_rgb_%s.nii.gz"
   local SM_NISSL_MRI_PATTERN="$TMPDIR/splatmap_${id}_nissl_mri_%s.nii.gz"
@@ -3569,23 +3642,43 @@ function merge_whole_specimen()
         -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $HIRES_TO_BFVIS_INVWARP_FULL
 
     # Create splat maps for all of the densities and models
-    while read -r stain model args; do
+    for stain in $(density_param "keys[]"); do
+      for model in $(density_param ".${stain} | keys[]"); do
+        for contrast in $(density_param ".${stain}.${model}.contrasts | keys[]"); do
 
-      set_block_density_vars $id $block $stain $model
+          set_block_density_vars $id $block $stain $model $contrast
 
-      if [[ -f $IHC_DENSITY_SPLAT_IMG ]]; then
+          if [[ -f $IHC_DENSITY_SPLAT_IMG ]]; then
 
-        c3d $IHC_MASK_SPLAT_IMG -scale 0 -shift 1 -o $OVERLAP_MASK
+            if [[ $stain != "NISSL" ]]; then
 
-        greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
-          -rm $OVERLAP_MASK $(printf $SM_IHC_OVERLAP_MASK_PATTERN $stain $model $block) \
-          -rm $IHC_DENSITY_SPLAT_IMG $(printf $SM_IHC_DENSITY_PATTERN $stain $model $block) \
-          -rm $IHC_MASK_SPLAT_IMG $(printf $SM_IHC_MASK_PATTERN $stain $model $block) \
-          -rm $IHC_RGB_SPLAT_IMG $(printf $SM_IHC_RGB_PATTERN $stain $model $block) \
-          -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $HIRES_TO_BFVIS_INVWARP_FULL
+              c3d $IHC_MASK_SPLAT_IMG -scale 0 -shift 1 -o $OVERLAP_MASK
 
-      fi
-    done < "$MDIR/density_scaling_vis.txt"
+              # TODO: we should multiply $IHC_MASK_SPLAT_IMG and $IHC_DENSITY_MASK_SPLAT_IMG because
+              # one is based on IHC boundaries and the other on existence of a specific contrast!
+
+              greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
+                -rm $OVERLAP_MASK $(printf $SM_IHC_OVERLAP_MASK_PATTERN $stain $model $contrast $block) \
+                -rm $IHC_DENSITY_SPLAT_IMG $(printf $SM_IHC_DENSITY_PATTERN $stain $model $contrast $block) \
+                -rm $IHC_MASK_SPLAT_IMG $(printf $SM_IHC_MASK_PATTERN $stain $model $contrast $block) \
+                -rm $IHC_RGB_SPLAT_IMG $(printf $SM_IHC_RGB_PATTERN $stain $model $contrast $block) \
+                -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $HIRES_TO_BFVIS_INVWARP_FULL
+
+            else
+
+              c3d $IHC_DENSITY_MASK_SPLAT_IMG -scale 0 -shift 1 -o $OVERLAP_MASK
+
+              greedy -d 3 -rf $HIRES_MRI_VIS_REFSPACE \
+                -rm $OVERLAP_MASK $(printf $SM_IHC_OVERLAP_MASK_PATTERN $stain $model $contrast $block) \
+                -rm $IHC_DENSITY_SPLAT_IMG $(printf $SM_IHC_DENSITY_PATTERN $stain $model $contrast $block) \
+                -rm $IHC_DENSITY_MASK_SPLAT_IMG $(printf $SM_IHC_MASK_PATTERN $stain $model $contrast $block) \
+                -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP $HIRES_TO_BFVIS_INVWARP_FULL
+
+            fi
+          fi
+        done
+      done
+    done
   done
 
   # Combine the splat maps
@@ -3614,88 +3707,97 @@ function merge_whole_specimen()
   fi
 
   # Create splat maps for all of the densities and models
-  while read -r stain model args; do
+  for stain in $(density_param "keys[]"); do
+    for model in $(density_param ".${stain} | keys[]"); do
+      for contrast in $(density_param ".${stain}.${model}.contrasts | keys[]"); do
 
-    set_block_density_vars $id $block $stain $model
+        set_specimen_density_vars $id $stain $model $contrast
 
-    SM_IHC_OVERLAP_MASK_BLOCKS=( $(printf $SM_IHC_OVERLAP_MASK_PATTERN $stain $model "*") )
-    SM_IHC_DENSITY_BLOCKS=( $(printf $SM_IHC_DENSITY_PATTERN $stain $model "*") )
-    SM_IHC_MASK_BLOCKS=( $(printf $SM_IHC_MASK_PATTERN $stain $model "*") )
-    SM_IHC_RGB_BLOCKS=( $(printf $SM_IHC_RGB_PATTERN $stain $model "*") )
+        SM_IHC_OVERLAP_MASK_BLOCKS=( $(printf $SM_IHC_OVERLAP_MASK_PATTERN $stain $model $contrast "*") )
+        SM_IHC_DENSITY_BLOCKS=( $(printf $SM_IHC_DENSITY_PATTERN $stain $model $contrast "*") )
+        SM_IHC_MASK_BLOCKS=( $(printf $SM_IHC_MASK_PATTERN $stain $model $contrast "*") )
+        SM_IHC_RGB_BLOCKS=( $(printf $SM_IHC_RGB_PATTERN $stain $model $contrast "*") )
 
-    if [[ ${#SM_IHC_DENSITY_BLOCKS[*]} -gt 0 ]]; then
+        if [[ ${#SM_IHC_DENSITY_BLOCKS[*]} -gt 0 ]]; then
 
-      # Create an overlap mask to normalize by
-      local WEIGHTMAP=$TMPDIR/weight_map.nii.gz
-      c3d ${SM_IHC_OVERLAP_MASK_BLOCKS[*]} \
-        -accum -add -endaccum -clip 1 inf -reciprocal -scale $N \
-        -o $WEIGHTMAP
+          # Create an overlap mask to normalize by
+          local WEIGHTMAP=$TMPDIR/weight_map.nii.gz
+          c3d ${SM_IHC_OVERLAP_MASK_BLOCKS[*]} \
+            -accum -add -endaccum -clip 1 inf -reciprocal -scale ${#SM_IHC_OVERLAP_MASK_BLOCKS[*]} \
+            -o $WEIGHTMAP
 
-      # Combine all the images and scale by the weightmap to normalize for overlap
-      c3d ${SM_IHC_MASK_BLOCKS[*]} -mean $WEIGHTMAP -times -o $SPECIMEN_MASK_SPLAT_VIS
-      c3d ${SM_IHC_DENSITY_BLOCKS[*]} -mean $WEIGHTMAP -times -o $SPECIMEN_DENSITY_SPLAT_VIS
-      c3d $WEIGHTMAP -popas W -mcs ${SM_IHC_RGB_BLOCKS[*]} \
-        -foreach-comp 3 -mean -push W -times -endfor \
-        -type uchar -omc $SPECIMEN_IHC_SPLAT_VIS
+          # Combine all the images and scale by the weightmap to normalize for overlap
+          c3d ${SM_IHC_DENSITY_BLOCKS[*]} -mean $WEIGHTMAP -times -o $SPECIMEN_DENSITY_SPLAT_VIS
+          c3d ${SM_IHC_MASK_BLOCKS[*]} -mean $WEIGHTMAP -times -o $SPECIMEN_MASK_SPLAT_VIS
 
-      # Apply masked smoothing to these maps (to make up for gaps)
-      c3d $SPECIMEN_MASK_SPLAT_VIS -as M -smooth-fast 2x0.2x0.2mm \
-        -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH -reciprocal -popas MSR \
-        $SPECIMEN_DENSITY_SPLAT_VIS -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times \
-        -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH \
-        -clear -mcs $SPECIMEN_IHC_SPLAT_VIS \
-        -foreach -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times -endfor \
-        -omc $SPECIMEN_IHC_SPLAT_VIS_SMOOTH
+          # Apply masked smoothing to these maps (to make up for gaps)
+          c3d $SPECIMEN_MASK_SPLAT_VIS -as M -smooth-fast 2x0.2x0.2mm \
+            -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH -reciprocal -popas MSR \
+            $SPECIMEN_DENSITY_SPLAT_VIS -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times \
+            -o $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH
 
-      # If the specimen has been warped to the template, apply this warp
-      if [[ -f $TEMPLATE_IV_TO_HIRES_VIS_AFFINE && -f $TEMPLATE_HIRES_WARP && -f $TEMPLATE_IV_HIRES_WARP ]]; then
+          if [[ $stain != 'NISSL' ]]; then
+            c3d $WEIGHTMAP -popas W -mcs ${SM_IHC_RGB_BLOCKS[*]} \
+              -foreach-comp 3 -mean -push W -times -endfor \
+              -type uchar -omc $SPECIMEN_IHC_SPLAT_VIS
 
-        # Apply the alignment to the density map and mask
-        greedy -d 3 \
-          -rf $TEMPLATE_IMG \
-          -rm $SPECIMEN_DENSITY_SPLAT_VIS $TEMPLATE_DENSITY_SPLAT \
-          -rm $SPECIMEN_MASK_SPLAT_VIS $TEMPLATE_DENSITY_MASK_SPLAT \
-          -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_IV_TO_HIRES_VIS_AFFINE,-1 $TEMPLATE_IV_HIRES_WARP
+            c3d $SPECIMEN_MASK_SPLAT_VIS -as M \
+              $SPECIMEN_DENSITY_SPLAT_VIS_SMOOTH -reciprocal -popas MSR \
+              -mcs $SPECIMEN_IHC_SPLAT_VIS \
+              -foreach -push M -times -smooth-fast 2x0.2x0.2mm -push MSR -times -endfor \
+              -omc $SPECIMEN_IHC_SPLAT_VIS_SMOOTH
+          fi
 
-      fi
+          # If the specimen has been warped to the template, apply this warp
+          if [[ -f $TEMPLATE_IV_TO_HIRES_VIS_AFFINE && -f $TEMPLATE_HIRES_WARP && -f $TEMPLATE_IV_HIRES_WARP ]]; then
 
-      # Create a merged workspace
-      itksnap-wt \
-        -lsm "$HIRES_MRI_VIS" -psn "9.4T MRI" \
-        -laa "$SPECIMEN_NISSL_SPLAT_VIS" -psn "NISSL recon" -props-set-mcd RGB \
-        -props-set-contrast LINEAR 0 255 \
-        -laa "$SPECIMEN_IHC_SPLAT_VIS" -psn "${stain} recon" -props-set-mcd RGB \
-        -props-set-contrast LINEAR 0 255 \
-        -laa "$SPECIMEN_DENSITY_SPLAT_VIS" \
-        -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
-        -psn "${stain} ${model}" \
-        -prs LayerMetaData.Sticky 1 \
-        -laa "$SPECIMEN_MASK_SPLAT_VIS" -psn "Recon mask" \
-        -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
+            # Apply the alignment to the density map and mask
+            greedy -d 3 \
+              -rf $TEMPLATE_IMG \
+              -rm $SPECIMEN_DENSITY_SPLAT_VIS $TEMPLATE_DENSITY_SPLAT \
+              -rm $SPECIMEN_MASK_SPLAT_VIS $TEMPLATE_DENSITY_MASK_SPLAT \
+              -r $TEMPLATE_HIRES_WARP,64 $TEMPLATE_IV_TO_HIRES_VIS_AFFINE,-1 $TEMPLATE_IV_HIRES_WARP
 
-      # Do the same for the template space
-      itksnap-wt \
-        -lsm "$TEMPLATE_HIRES_RESLICED" -psn "9.4T MRI" \
-        -laa "$TEMPLATE_DENSITY_SPLAT" \
-        -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
-        -psn "${stain} ${model}" \
-        -prs LayerMetaData.Sticky 1 \
-        -laa "$TEMPLATE_DENSITY_MASK_SPLAT" -psn "Recon mask" \
-        -o $TEMPLATE_DENSITY_SPLAT_WORKSPACE
+          fi
 
-      # Generate a figure for paper
-      make_whole_specimen_density_figure $id $stain $model
+          # Create a merged workspace
+          itksnap-wt \
+            -lsm "$HIRES_MRI_VIS" -psn "9.4T MRI" \
+            -laa "$SPECIMEN_NISSL_SPLAT_VIS" -psn "NISSL recon" -props-set-mcd RGB \
+            -props-set-contrast LINEAR 0 255 \
+            -laa "$SPECIMEN_IHC_SPLAT_VIS" -psn "${stain} recon" -props-set-mcd RGB \
+            -props-set-contrast LINEAR 0 255 \
+            -laa "$SPECIMEN_DENSITY_SPLAT_VIS" \
+            -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+            -psn "${stain} ${model}" \
+            -prs LayerMetaData.Sticky 1 \
+            -laa "$SPECIMEN_MASK_SPLAT_VIS" -psn "Recon mask" \
+            -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
 
-      fi
+          # Do the same for the template space
+          itksnap-wt \
+            -lsm "$TEMPLATE_HIRES_RESLICED" -psn "9.4T MRI" \
+            -laa "$TEMPLATE_DENSITY_SPLAT" \
+            -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+            -psn "${stain} ${model}" \
+            -prs LayerMetaData.Sticky 1 \
+            -laa "$TEMPLATE_DENSITY_MASK_SPLAT" -psn "Recon mask" \
+            -o $TEMPLATE_DENSITY_SPLAT_WORKSPACE
 
-  done < "$MDIR/density_scaling_vis.txt"
+          # Generate a figure for paper
+          make_whole_specimen_density_figure $id $stain $model
+
+        fi
+      done
+    done
+  done
 }
 
 function merge_splat()
 {
-  read -r id stain model args <<< "$@"
+  read -r id stain model contrast args <<< "$@"
   set_specimen_vars $id
-  set_specimen_density_vars $id $stain $model
+  set_specimen_density_vars $id $stain $model $contrast
 
   # Collect all the blocks
   local BLOCKS=$(cat $MDIR/blockface_param.txt | awk -v s=$id '$1==s {print $2}')
@@ -3709,7 +3811,7 @@ function merge_splat()
 
   for block in $BLOCKS; do
     set_block_vars $id $block
-    set_block_density_vars $id $block $stain $model
+    set_block_density_vars $id $block $stain $model $contrast
 
     if [[ -f $IHC_DENSITY_SPLAT_IMG ]]; then
 
