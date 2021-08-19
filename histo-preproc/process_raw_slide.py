@@ -22,7 +22,14 @@ def tile_means(img, tile_size):
 # Get the image spacing from the header, in mm units
 def get_spacing(slide):
     (sx, sy) = (0.0, 0.0)
-    if 'openslide.mpp-x' in slide.properties:
+    if all(['tiff.' + x in slide.properties 
+            for x in ('XResolution','YResolution','ResolutionUnit')]):
+        rx = float(slide.properties['tiff.XResolution'])
+        ry = float(slide.properties['tiff.XResolution'])
+        runit = slide.properties['tiff.ResolutionUnit']
+        rbase = {'centimeter':10.0, 'millimeter':1.0}.get(runit,0.0)
+        sx,sy = rbase / rx, rbase / ry
+    elif 'openslide.mpp-x' in slide.properties:
         sx = float(slide.properties['openslide.mpp-x']) / 1000.0
         sy = float(slide.properties['openslide.mpp-y']) / 1000.0
     elif 'openslide.comment' in slide.properties:
