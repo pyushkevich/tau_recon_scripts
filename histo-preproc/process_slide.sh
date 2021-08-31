@@ -71,23 +71,11 @@ SUMMARY=./data/${svs}_thumbnail.tiff
 RGB_NIFTI=./data/${svs}_rgb_40um.nii.gz
 METADATA=./data/${svs}_metadata.json
 LABELFILE=./data/${svs}_label.tiff
-python process_raw_slide.py -i $svslocal -s ./data/${svs}
+python process_raw_slide.py -m -i $svslocal -s ./data/${svs}
 
 # Mid-resolution image
 MIDRES_PNG=./data/${svs}_x16.png
-MIDRES_TIFF=./data/${svs}_x16.tiff
 MIDRES_PTIFF=./data/${svs}_x16_pyramid.tiff
-RESFILE=./data/${svs}_resolution.txt
-
-# Create the mid-resolution image
-python process_raw_slide.py -i $svslocal -m $MIDRES_PNG > $RESFILE
-
-# Generate a pyramid TIFF file of the x16
-convert $MIDRES_PNG $MIDRES_TIFF
-vips tiffsave $MIDRES_TIFF $MIDRES_PTIFF \
-  --vips-progress --compression=deflate \
-  --tile --tile-width=256 --tile-height=256 \
-  --pyramid --bigtiff
 
 # Upload the results generated so far
 upload_result $SUMMARY 1
@@ -95,5 +83,4 @@ upload_result $RGB_NIFTI 1
 upload_result $METADATA 1
 upload_result $MIDRES_PNG 1
 upload_result $MIDRES_PTIFF 1
-upload_result $RESFILE 1
 upload_result $LABELFILE 0
