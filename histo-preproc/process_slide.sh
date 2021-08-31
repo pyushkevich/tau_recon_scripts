@@ -11,13 +11,13 @@ gcloud config set project cfn-cluster-test
 # Upload function
 function upload_result() 
 {
-	out=${1?}
-	REQUIRED=${2?}
+  out=${1?}
+  REQUIRED=${2?}
 
-	if [[ $REQUIRED -eq 1 && ! -f $out ]]; then
+  if [[ $REQUIRED -eq 1 && ! -f $out ]]; then
     echo "Failed to generate output $out"
     exit -1
-	fi
+  fi
 
   if [[ -f $out ]]; then
     if ! gsutil cp $out gs://mtl_histology/$id/histo_proc/${svs}/preproc/ ; then
@@ -52,12 +52,9 @@ if [[ $LEVELS -le 1 ]]; then
   svsflat=$(ls ./data/fixflat/${svs}.*)
 
   # Write pyramid
-	if ! vips tiffsave $svsflat $svslocal \
-		--vips-progress --compression=jpeg --Q=80 \
-		--tile --tile-width=256 --tile-height=256 \
-		--pyramid --bigtiff; then
-		echo "Failed to generate pyramid tif/svs"
-		exit -1
+  if ! ./fixup_huron.py $svsflat $svslocal; then
+    echo "Failed to generate pyramid tif/svs"
+    exit -1
   fi
 
   if ! gsutil cp $svslocal $svsfile; then

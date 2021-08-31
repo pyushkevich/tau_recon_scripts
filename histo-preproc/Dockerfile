@@ -1,5 +1,5 @@
 # Need CUDA!
-FROM pyushkevich/itksnap:v3.8.0-beta
+FROM pyushkevich/itksnap:v3.8.0
 
 # Some packages
 RUN apt-get update
@@ -15,6 +15,9 @@ RUN mkdir -p /usr/local/gcloud \
   && tar -C /usr/local/gcloud -xvf /tmp/google-cloud-sdk.tar.gz \
   && bash /usr/local/gcloud/google-cloud-sdk/install.sh --quiet
 
+# Install ImageMagick
+RUN apt-get update && apt-get install -y imagemagick
+
 # Install VIPS
 ARG VIPS_VERSION=8.8.0
 ARG VIPS_URL=https://github.com/libvips/libvips/releases/download
@@ -25,16 +28,14 @@ RUN wget ${VIPS_URL}/v${VIPS_VERSION}/vips-${VIPS_VERSION}.tar.gz \
   && make V=0 \
   && make install
 
-# Install ImageMagick
-RUN apt-get update && apt-get install -y imagemagick
-
 # Adding the package path to local
 ENV PATH $PATH:/usr/local/gcloud/google-cloud-sdk/bin
 ENV LD_LIBRARY_PATH /usr/local/lib:$LD_LIBRARY_PATH
 
+# Run pip
+COPY requirements.txt /app/
+RUN pip install -r /app/requirements.txt
+
 # Copy internals
 COPY . /app/
-
-# Run pip
-RUN pip install -r /app/requirements.txt
 

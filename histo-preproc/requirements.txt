@@ -3,3 +3,4 @@ openslide-python
 SimpleITK
 argparse
 pyvips
+bitstring
