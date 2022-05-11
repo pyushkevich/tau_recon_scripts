@@ -1,4 +1,6 @@
 numpy
 openslide-python
 SimpleITK
-parse
+argparse
+pyvips
+bitstring

@@ -4,7 +4,8 @@ import openslide
 import numpy as np
 import os, time, math, sys
 import getopt
-import parse
+import argparse
+import pyvips
 import SimpleITK as sitk
 import json
 
@@ -22,7 +23,14 @@ def tile_means(img, tile_size):
 # Get the image spacing from the header, in mm units
 def get_spacing(slide):
     (sx, sy) = (0.0, 0.0)
-    if 'openslide.mpp-x' in slide.properties:
+    if all(['tiff.' + x in slide.properties 
+            for x in ('XResolution','YResolution','ResolutionUnit')]):
+        rx = float(slide.properties['tiff.XResolution'])
+        ry = float(slide.properties['tiff.XResolution'])
+        runit = slide.properties['tiff.ResolutionUnit']
+        rbase = {'centimeter':10.0, 'millimeter':1.0}.get(runit,0.0)
+        sx,sy = rbase / rx, rbase / ry
+    elif 'openslide.mpp-x' in slide.properties:
         sx = float(slide.properties['openslide.mpp-x']) / 1000.0
         sy = float(slide.properties['openslide.mpp-y']) / 1000.0
     elif 'openslide.comment' in slide.properties:
@@ -37,63 +45,81 @@ def get_spacing(slide):
     return (sx, sy)
 
 
-# Main function
-def process_svs(p):
+# Main
+def main(argv):
+
+    # Create an argument parser
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--input', type=str,
+                        help='Input SVS or TIFF file')
+    parser.add_argument('-s', '--summary', type=str, 
+                        help='Filename prefix for summary outputs')
+    parser.add_argument('-m', '--x16', action='store_true',
+                        help='Include x16 outputs in the summary')
+    parser.add_argument('-l', '--check-levels', action='store_true',
+                        help='Print the number of levels in the input image')
+    args = parser.parse_args()
 
     # If only asking to see the number of levels, do that
-    if p['check_levels'] is True:
+    if args.check_levels:
         try:
-            slide=openslide.OpenSlide(p['in_img'])
+            slide=openslide.OpenSlide(args.input)
             print(slide.level_count)
         except:
             print(-1)
         return
+    elif not args.summary:
+        print('Missing required argument: -s')
+        return 255
 
     # Read the slide first
-    slide=openslide.OpenSlide(p['in_img'])
+    slide=openslide.OpenSlide(args.input)
 
-    # If we just want summaries, do that
-    if len(p['summary']):
-        # The simple thumbnail
-        img = slide.get_thumbnail((1000,1000))
-        img.save(p['summary'] + '_thumbnail.tiff')
+    # The simple thumbnail
+    img = slide.get_thumbnail((1000,1000))
+    img.save(args.summary + '_thumbnail.tiff')
 
-        # The NIFTI thumbnail with fixed resolution
-        (sx,sy) = get_spacing(slide)
+    # The NIFTI thumbnail with fixed resolution
+    (sx,sy) = get_spacing(slide)
 
-        # Determine the dimensions of the thumbnail to achieve desired
-        # resolution of 0.04x0.04mm
-        wx = round_up(slide.dimensions[0] * sx / 0.04, 1)
-        wy = round_up(slide.dimensions[1] * sy / 0.04, 1)
+    # Determine the dimensions of the thumbnail to achieve desired
+    # resolution of 0.04x0.04mm
+    wx = round_up(slide.dimensions[0] * sx / 0.04, 1)
+    wy = round_up(slide.dimensions[1] * sy / 0.04, 1)
 
-        # Get the thumbnail from the image at this resolution
-        idata = np.asarray(slide.get_thumbnail((wx, wy)))
-        (wwx, wwy) = (idata.shape[1], idata.shape[0])
+    # Get the thumbnail from the image at this resolution
+    idata = np.asarray(slide.get_thumbnail((wx, wy)))
+    (wwx, wwy) = (idata.shape[1], idata.shape[0])
 
-        # Recompute the spacing using the actual size of image
-        ssx = (sx * slide.dimensions[0]) / wwx
-        ssy = (sy * slide.dimensions[1]) / wwy
+    # Recompute the spacing using the actual size of image
+    ssx = (sx * slide.dimensions[0]) / wwx
+    ssy = (sy * slide.dimensions[1]) / wwy
 
-        # Save as a NIFTI
-        res = sitk.GetImageFromArray(idata, True)
-        res.SetSpacing((ssx, ssy))
-        sitk.WriteImage(res, p['summary'] + '_rgb_40um.nii.gz')
+    # Save as a NIFTI
+    res = sitk.GetImageFromArray(idata, True)
+    res.SetSpacing((ssx, ssy))
+    sitk.WriteImage(res, args.summary + '_rgb_40um.nii.gz')
 
-        # Save dimensions info to a JSON file
-        with open(p['summary'] + "_metadata.json", "wt") as fp:
-            json.dump({
-                "dimensions": slide.dimensions,
-                "level_count": slide.level_count,
-                "level_dimensions": slide.level_dimensions,
-                "level_downsamples": slide.level_downsamples,
-                "spacing": (sx,sy) }, fp);
+    # Save dimensions info to a JSON file
+    with open(args.summary + "_metadata.json", "wt") as fp:
+        json.dump({
+            "dimensions": slide.dimensions,
+            "level_count": slide.level_count,
+            "level_dimensions": slide.level_dimensions,
+            "level_downsamples": slide.level_downsamples,
+            "spacing": (sx,sy) }, fp);
 
-        # Get the label
-        if 'label' in slide.associated_images:
-            img = slide.associated_images['label']
-            img.save(p['summary'] + '_label.tiff')
+    # Get the label
+    if 'label' in slide.associated_images:
+        img = slide.associated_images['label']
+        img.save(args.summary + '_label.tiff')
 
-    if len(p['out_x16']):
+    # Get the label
+    if 'macro' in slide.associated_images:
+        img = slide.associated_images['macro']
+        img.save(args.summary + '_macro.tiff')
+
+    if args.x16:
 
         # Requested x16 middle-resolution image. The middle resolution images
         # can be generated using openslide very easily
@@ -105,52 +131,16 @@ def process_svs(p):
 
         # Downsample at this level
         image=slide.read_region((0,0), best_lev, slide.level_dimensions[best_lev])
-        image.save(p['out_x16'])
+        image.save(args.summary + '_x16.png')
+        arr=np.array(image)
 
-        # Print slide information
-        print("Level dimensions: ", slide.level_dimensions)
-        print("Level downsamples: ", slide.level_downsamples)
+        # Create a pyvips image
+        h,w,b = arr.shape
+        ivips = pyvips.Image.new_from_memory(arr.reshape(h*w*b).data,w,h,b,'uchar')
+        ivips.write_to_file(args.summary + '_x16_pyramid.tiff',
+                            Q=80, tile=True, compression='jpeg', 
+                            pyramid=True, bigtiff=True)
 
-# Usage
-def usage(exit_code):
-    print('process_raw_slide -i <input_svs> -o <output> -m <out_x16> [-t tile_size]')
-    sys.exit(exit_code)
-    
-# Main
-def main(argv):
-    # Initial parameters
-    p = {'in_img' : '', 
-         'out_img' : '', 
-         'summary' : '',
-         'out_x16' : '',
-         'tile_size' : 100,
-         'check_levels' : False}
-
-    # Read options
-    try:
-        opts, args = getopt.getopt(argv, "hi:o:t:s:m:l")
-    except getopt.GetoptError:
-        usage(2)
-
-    for opt,arg in opts:
-        if opt == '-h':
-            usage(0)
-        elif opt == '-i':
-            p['in_img'] = arg
-        elif opt == '-o':
-            p['out_img'] = arg
-        elif opt == '-s':
-            p['summary'] = arg
-        elif opt == '-m':
-            p['out_x16'] = arg
-        elif opt == '-t':
-            p['tile_size'] = int(arg)
-        elif opt == '-l':
-            p['check_levels'] = True
-
-
-    # Run the main code
-    process_svs(p)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
