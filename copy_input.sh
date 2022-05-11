@@ -33,16 +33,20 @@ function copy_blockface()
 # Organize the MRIs
 function copy_mold_mri()
 {
+  REGEXP=$1
+
   while read -r ID SDIR args; do
 
     # Create the input directory
-    IDIR=$ROOT/input/$ID/mold_mri
-    mkdir -p $IDIR
+    if [[ $ID =~ $REGEXP ]]; then
+      IDIR=$ROOT/input/$ID/mold_mri
+      mkdir -p $IDIR
 
-    # Copy needed files
-    for fn in mtl7t.nii.gz contour_image.nii.gz slitmold.nii.gz holderrotation.mat; do
-      rsync -av ${MOLD_SRC_DIR?}/$ID/$SDIR/$fn $IDIR/
-    done
+      # Copy needed files
+      for fn in mtl7t.nii.gz contour_image.nii.gz slitmold.nii.gz holderrotation.mat; do
+        rsync -av ${MOLD_SRC_DIR?}/$ID/$SDIR/$fn $IDIR/
+      done
+    fi
 
   done < $MDIR/moldmri_src.txt
 }
@@ -50,62 +54,69 @@ function copy_mold_mri()
 # Organize the high-resolution MRIs - from FlyWheel
 function copy_hires_mri()
 {
-  while IFS=$'\t' read -r ID FWPATH args; do 
+  REGEXP=$1
 
-    # Create the input directory
-    IDIR=$ROOT/input/$ID/hires_mri
-    mkdir -p $IDIR
+  while IFS=$',' read -r ID FWPATH args; do
 
-    # Go there
-    pushd $IDIR > /dev/null
+    if [[ $ID =~ $REGEXP ]]; then
+      # Create the input directory
+      IDIR=$ROOT/input/$ID/hires_mri
+      mkdir -p $IDIR
 
-    # Base filename
-    local FN=$(basename "$FWPATH")
+      # Go there
+      pushd $IDIR > /dev/null
 
-    # Check for existing file
-    if [[ -f $FN || -f ${FN}.gz ]]; then
-      echo Skipping $ID:$FN
-      continue
+      # Base filename
+      local FN=$(basename "$FWPATH")
+
+      # Check for existing file
+      if [[ -f $FN || -f ${FN}.gz ]]; then
+        echo Skipping $ID:$FN
+        continue
+      fi
+
+      # Copy needed files
+      fw download -o $FN "$FWPATH"
+
+      # Compress if needed
+      if [[ $FN =~ nii$ ]]; then
+        gzip $FN
+        ln -sf ${FN}.gz ${ID}_mri_hires.nii.gz
+      else
+        ln -sf $FN ${ID}_mri_hires.nii.gz
+      fi
+
+      popd > /dev/null
     fi
 
-    # Copy needed files
-    fw download -o $FN "$FWPATH"
+  done < $MDIR/hiresmri_src.csv
 
-    # Compress if needed
-    if [[ $FN =~ nii$ ]]; then
-      gzip $FN
-      ln -sf ${FN}.gz ${ID}_mri_hires.nii.gz
-    else
-      ln -sf $FN ${ID}_mri_hires.nii.gz
-    fi
-
-    popd > /dev/null
-
-  done < $MDIR/hiresmri_src.txt
 }
 
 # Set up projects for manual registration - makes life easier
 function setup_manual_mri_regs()
 {
+  REGEXP=$1
   while read -r ID args; do
+    if [[ $ID =~ $REGEXP ]]; then
 
-    # Set up the directories
-    MOLDDIR=$ROOT/input/$ID/mold_mri
-    HIRESDIR=$ROOT/input/$ID/hires_mri
-    MANDIR=$ROOT/manual/$ID/hires_to_mold
-    mkdir -p $MANDIR
+      # Set up the directories
+      MOLDDIR=$ROOT/input/$ID/mold_mri
+      HIRESDIR=$ROOT/input/$ID/hires_mri
+      MANDIR=$ROOT/manual/$ID/hires_to_mold
+      mkdir -p $MANDIR
 
-    # Create the workspace with mold as main, hires as overlay
-    itksnap-wt \
-      -lsm $MOLDDIR/mtl7t.nii.gz -psn "MOLD MRI" \
-      -laa $HIRESDIR/${ID}_mri_hires.nii.gz -psn "HIRES MRI" \
-      -o $MANDIR/${ID}_hires_to_mold.itksnap
-
+      # Create the workspace with mold as main, hires as overlay
+      itksnap-wt \
+        -lsm $MOLDDIR/mtl7t.nii.gz -psn "MOLD MRI" \
+        -laa $HIRESDIR/${ID}_mri_hires.nii.gz -psn "HIRES MRI" \
+        -o $MANDIR/${ID}_hires_to_mold.itksnap
+    fi
   done < $MDIR/moldmri_src.txt
 }
 
 # Main entrypoint
 copy_blockface "$@"
-copy_mold_mri
-copy_hires_mri
-setup_manual_mri_regs
+copy_mold_mri "$@"
+copy_hires_mri "$@"
+setup_manual_mri_regs "$@"

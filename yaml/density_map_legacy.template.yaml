@@ -14,7 +14,7 @@ spec:
             secretName: gse-key
       containers:
       - name: my-gpu-container-torch
-        image: pyushkevich/tangle-cnn-prod:legacy2020
+        image: pyushkevich/tangle-cnn-prod-legacy2020:latest
         command: ["/bin/bash"]
         args: ["process_slide_full.sh", "cfn-cluster-test", "%ID%", "%SVS%", "%STAIN%", "%MODEL%"]
         resources:
@@ -28,4 +28,4 @@ spec:
           - name: GOOGLE_APPLICATION_CREDENTIALS
             value: /var/secrets/google/key.json
       restartPolicy: Never
-      activeDeadlineSeconds: 3600
+      activeDeadlineSeconds: 15000

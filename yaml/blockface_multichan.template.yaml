@@ -16,7 +16,7 @@ spec:
       - name: my-gpu-container-torch
         image: pyushkevich/tangle-cnn-prod:latest
         command: ["/bin/bash"]
-        args: ["process_blockface_block.sh", "cfn-cluster-test", "%ID%", "%BLOCK%"]
+        args: ["process_blockface_block.sh", "cfn-cluster-test", "%ID%", "%BLOCK%", "%SEC0%", "%SEC1%"]
         resources:
           limits:
             nvidia.com/gpu: 1

@@ -2,20 +2,27 @@
   "inputs": [
     {
       "name": "Blockface",
-      "display": "RGB"
+      "display": "RGB",
+      "edge_color": [ 0, 192, 0 ]
     },
     {
       "name": "MRI-like BF",
-      "display": "grayscale"
+      "display": "grayscale",
+      "edge_color": [ 192, 0, 0 ]
     },
     {
       "name": "Hires MRI (affine)",
-      "display": "grayscale"
+      "display": "grayscale",
+      "edge_color": [ 192, 0, 0 ]
     },
     {
       "name": "Hires MRI (warped)",
       "display": "grayscale",
-      "edges": true
+      "edges": true,
+      "edge_sigma": "4vox",
+      "edge_color": [ 192, 0, 0 ],
+      "edge_threshold": [4, 4],
+      "reference": true
     }
   ],
   "slicing": {

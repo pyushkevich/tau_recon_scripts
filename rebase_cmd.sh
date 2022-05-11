@@ -59,9 +59,9 @@ for arg in "$@"; do
     F_SRC+=($arg)
     F_NEW=$(basename $arg)
     F_TRY=$F_NEW
-    N_TRY=0
-    while [[ -f $F_TRY ]]; do
-      F_TRY="$F_NEW.${N_TRY}"
+    N_TRY=1
+    while [[ -f $COPYDIR/$F_TRY ]]; do
+      F_TRY=$(echo "$F_NEW" | sed -e "s/\([-\.]*\)\.\(.*\)/\1_${N_TRY}.\2/")
       N_TRY=$((N_TRY+1))
     done
     F_DST+=($F_TRY)

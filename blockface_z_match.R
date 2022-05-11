@@ -105,23 +105,33 @@ objplt<-function(p, mode)
                                                                  method="spearman"),6)))
 }
 
-# Set up the matrix of constraints (positive paddings)
-ui = rbind(c(0,0,1,0,0),
-           c(0,0,0,1,0),
-           c(0,0,0,0,1))
+# Set up the matrix of constraints (positive paddings) diag(N-1)
+#ui = rbind(c(0,0,1,0,0),
+#           c(0,0,0,1,0),
+#           c(0,0,0,0,1))
 
-ci = c(0,0,0)
+#ui = rbind(c(0,0,1,0),
+#           c(0,0,0,1))
+
+ui = cbind(matrix(0,N-1,2), diag(N-1))
+ci = rep(0, N-1)
+
+# ci = c(0,0,0)
+#ci = c(0,0)
 
 # Perform optimization with flip = 1
 flip = 1
 zoff_init<-find_init_offset(flip)
+
 res.noflip=constrOptim(theta=c(zoff_init, 1.0, rep(0.5, N-1)), f=objfun, method="Nelder-Mead",
                 ui=ui, ci=ci, control=list(maxit=5000))
+print(paste("Rho = ", 1 - res.noflip$value, " for flip = 1"))
 
 flip = -1
 zoff_init<-find_init_offset(flip)
 res.flip=constrOptim(theta=c(zoff_init, 1.0, rep(0.5, N-1)), f=objfun, method="Nelder-Mead",
                 ui=ui, ci=ci, control=list(maxit=5000))
+print(paste("Rho = ", 1 - res.flip$value, " for flip = -1"))
 
 # Select which result to use
 if(opt$flip < 0 || (opt$flip==0 && res.noflip$value > res.flip$value )) {

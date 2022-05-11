@@ -407,7 +407,7 @@ function preprocess_specimen_slides()
     if [[ $force -gt 0 ]]; then
       must_run=1
     fi
-    for fn in thumbnail.tiff x16.png resolution.txt metadata.json rgb_40um.nii.gz; do
+    for fn in thumbnail.tiff metadata.json rgb_40um.nii.gz; do
       fn_full=${BASE}${fn}
       if ! grep "$fn_full" $FREMOTE > /dev/null; then
         must_run=1
@@ -585,7 +585,7 @@ function density_map_all()
   # Process the individual blocks
   while read -r id url; do
     if [[ $id =~ $REGEXP ]]; then
-      density_map_specimen ${id} ${stain} ${model} ${dryrun} ${force}
+      density_map_specimen ${id} ${stain} ${model} ${dryrun} ${force} ${legacy}
     fi
   done < "$MDIR/histo_matching.txt"
 }
@@ -606,9 +606,13 @@ function blockface_preprocess_specimen()
 
 function blockface_preprocess_all()
 {
-  for id in $(cat $MDIR/histo_matching.txt | awk '{print $1}'); do
-    blockface_preprocess_specimen $id
-  done
+  REGEXP=$1
+
+  while read -r id url; do
+    if [[ $id =~ $REGEXP ]]; then
+      blockface_preprocess_specimen ${id}
+    fi
+  done < "$MDIR/histo_matching.txt"
 }
 
 
@@ -721,9 +725,11 @@ function rsync_histo_proc()
 function rsync_histo_all()
 {
   REGEXP=$1
-  cat $MDIR/histo_matching.txt | grep "$REGEXP" | while read -r id; do
-    rsync_histo_proc $id
-  done
+  while read -r id args; do
+    if [[ $id =~ $REGEXP ]]; then
+      rsync_histo_proc $id
+    fi
+  done < "$MDIR/histo_matching.txt"
 }
 
 # Generic function to download an SVG from PHAS with timestamp check
@@ -837,30 +843,83 @@ function blockface_multichannel_block()
 {
   read -r id block force args <<< "$@"
 
-  # Geberate a job ID and YAML file
-  JOB=$(echo $id $block | md5sum | cut -c 1-6)
-  YAML=/tmp/density_${JOB}.yaml
+  # Read remote listing of JPEGs
+  local SPECIMEN_BF_GCP_ROOT="gs://mtl_histology/${id}"
+  local FREMOTE=$(mktemp "/tmp/bf_mc_lst_${id}_${block}.XXXXXX")
+  local FREMOTEPROC=$(mktemp "/tmp/bf_mc_prc_${id}_${block}.XXXXXX")
+  local FSEC=$(mktemp "/tmp/bf_mc_sec_${id}_${block}.XXXXXX")
+  gsutil ls "$SPECIMEN_BF_GCP_ROOT/bf_raw/${id}_${block}_*_05.jpg" \
+            "$SPECIMEN_BF_GCP_ROOT/bf_raw/${id}_${block}_*_10.jpg" > $FREMOTE
 
-  # Do YAML substitution
-  cat $ROOT/scripts/yaml/blockface_multichan.template.yaml | \
-    sed -e "s/%ID%/${id}/g" -e "s/%JOBID%/${JOB}/g" -e "s/%BLOCK%/${block}/g" \
-    > $YAML
+  # Read the remote listing of existing files
+  rm -rf $FREMOTEPROC
+  if ! gsutil ls "$SPECIMEN_BF_GCP_ROOT/bf_proc/${id}_${block}_**/*.nii.gz" > $FREMOTEPROC; then
+    touch $FREMOTEPROC
+  fi
 
-  # Run the yaml
-  echo "Scheduling job $id $block $YAML"
-  kube apply -f $YAML
+  # Read the last section number
+  while IFS= read -r fn; do
+    base=$(basename $fn .jpg)
+    if ! grep "${base}_deepcluster.nii.gz" $FREMOTEPROC > /dev/null; then
+      echo $base
+    elif ! grep "${base}_deepcluster_rgb.nii.gz" $FREMOTEPROC > /dev/null; then
+      echo $base
+    fi
+  done < $FREMOTE | awk -F_ '{print $3}' > $FSEC
+
+  # Check if any sections to do
+  if [[ $(wc -l < $FSEC) -eq 0 ]]; then
+    echo "No slices require processing for $id $block"
+    return
+  fi
+
+  # Get first and last sections
+  local SEC0=$(cat $FSEC | sort -u -n | head -n 1)
+  local SEC1=$(cat $FSEC | sort -u -n | tail -n 1)
+
+  # Create jobs for every batch of sections
+  local BS=5
+  for ((s=SEC0; s<=SEC1; s+=BS)); do
+    # Generate a job ID and YAML file
+    JOB=$(echo $id $block $s | md5sum | cut -c 1-6)
+    YAML=/tmp/density_${JOB}.yaml
+
+    # Do YAML substitution
+    cat $ROOT/scripts/yaml/blockface_multichan.template.yaml | \
+      sed -e "s/%ID%/${id}/g" -e "s/%JOBID%/${JOB}/g" -e "s/%BLOCK%/${block}/g" \
+          -e "s/%SEC0%/${s}/g" -e "s/%SEC1%/$((s+BS))/g" > $YAML
+
+    # Run the yaml
+    echo "Scheduling job $id $block ${s} $((s+BS)) $YAML"
+    kube apply -f $YAML
+  done
 }
 
 function blockface_multichannel_all()
 {
+  # Read the command-line options\
+  local force=0
+
+  while getopts "F" opt; do
+    case $opt in
+      F) force=1;;
+      \?) echo "Unknown option $OPTARG"; exit 2;;
+    esac
+  done
+
+  # Get remaining args
+  shift $((OPTIND - 1))
+
+  # Specimen regexp
+  REGEXP=$1
+
+  # Process the individual blocks
   while read -r id blocks; do
-
-    for b in $blocks; do
-
-      blockface_multichannel_block $id $b
-
-    done
-
+    if [[ $id =~ $REGEXP ]]; then
+      for b in $blocks; do
+        blockface_multichannel_block $id $b ${force}
+      done
+    fi
   done < "$MDIR/blockface_src.txt"
 }
 
@@ -876,34 +935,47 @@ function rsync_bf_proc()
   # Create some exclusions
   local EXCL=".*\.png|.*\.tiff"
   mkdir -p "$SPECIMEN_BF_LOCAL_ROOT"
+  echo gsutil -m rsync -R -x "$EXCL" "$SPECIMEN_BF_GCP_ROOT/" "$SPECIMEN_BF_LOCAL_ROOT/"
   gsutil -m rsync -R -x "$EXCL" "$SPECIMEN_BF_GCP_ROOT/" "$SPECIMEN_BF_LOCAL_ROOT/"
 }
 
 function rsync_bf_proc_all()
 {
+  # Specimen regexp
   REGEXP=$1
-  cat $MDIR/blockface_src.txt | grep "$REGEXP" | while read -r id; do
-    rsync_bf_proc $id
-  done
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      rsync_bf_proc $id
+    fi
+  done < "$MDIR/blockface_src.txt"
 }
 
 
 function usage()
 {
-  echo "recon.sh : Histology to MRI reconstruction script for R01-AG056014"
+  echo "svs_to_cloud.sh : Cloud-based functionality for R01-AG056014"
   echo "Usage:"
   echo "  recon.sh [options] <function> [args]"
   echo "Options:"
   echo "  -d                                          : Turn on command echoing (for debugging)"
   echo "Primary functions:"
+  echo "  check_for_new_slides_all [regex]            : Update online histology spreadsheet"
   echo "  update_histo_match_manifest_all [regex]     : Update manifests for all/some specimens"
   echo "  preprocess_slides_all [-D] [-F] [regex]     : Run basic pre-processing on slides in GCP"
-  echo "  check_for_new_slides_all [regex]            : Update online histology spreadsheet"
-  echo "  density_map_all [-D] [-F] <stain> <model> [regex] "
+  echo "  nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP"
+  echo "  density_map_all [-L] [-D] [-F] <stain> <model> [regex] "
   echo "                                              : Compute density maps with WildCat"
+  echo "  rsync_histo_all [regex]                     : Download remote processing results"
+  echo "Blockface functions:"
+  echo "  blockface_preprocess_all [regex]            : Run basic preprocessing on BF images in GCP"
+  echo "  blockface_multichannel_all [regex]          : Run feature extraction on BF images in GCP"
+  echo "  rsync_bf_proc_all [regex]                   : Download remote BF processing results"
   echo "Common options:"
   echo "  -D                                          : Dry run: just show slides that need action"
   echo "  -F                                          : Force: override existing results"
+  echo "  -L                                          : Use legacy code"
 }
 
 # Read the command-line options

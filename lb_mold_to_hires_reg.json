@@ -3,13 +3,13 @@
     {
       "name": "9.4T MRI",
       "display": "grayscale",
-      "edge_color": "red",
+      "edge_color": [ 192, 0, 0 ],
       "edges": true
     },
     {
       "name": "7T MRI",
       "display": "grayscale",
-      "edge_color": "red"
+      "edge_color": [ 192, 0, 0 ]
     },
     {
       "name": "7T MRI",

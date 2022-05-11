@@ -13,24 +13,9 @@
       "edge_color": [ 192, 0, 0 ]
     },
     {
-      "name": "Nissl (Affine)",
+      "name": "IHC (Warped)",
       "display": "RGB",
       "edge_color": [ 192, 0, 0 ]
-    },
-    {
-      "name": "Nissl MRI-like (Warped)",
-      "display": "grayscale",
-      "edge_color": [ 192, 0, 0 ]
-    },
-    {
-      "name": "Nissl MRI-like (Affine)",
-      "display": "grayscale",
-      "edge_color": [ 192, 0, 0 ]
-    },
-    {
-      "name": "Blockface",
-      "display": "RGB",
-      "edge_color": [ 0, 192, 0 ]
     }
   ],
   "slicing": {
