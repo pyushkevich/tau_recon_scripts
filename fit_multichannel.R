@@ -21,15 +21,21 @@ option_list <- list(
    make_option(c("-m", "--mask"), type="character", default=NULL,
                help="Input foreground mask file for single-image mode",
                metavar="filename"),
+   make_option(c("-p", "--param"), type="character", default=NULL,
+               help="File where to save the model parameters",
+               metavar="filename"),
    make_option(c("--sfg"), type="integer", default=500,
                help="Number of samples per slide from the masked region (default: 500)", metavar="int"),
    make_option(c("--sbg"), type="integer", default=100, 
-               help="Number of samples per slide from the background region (default: 100)", metavar="int")
+               help="Number of samples per slide from the background region (default: 100)", metavar="int"),
+   make_option(c("-c", "--channel"), type="integer", default=0,
+               help="If target is multichannel, which channel to fit (default: 0)", metavar="int")
 ); 
 
 # Parse options
 opt_parser <- OptionParser(option_list=option_list);
 opt <- parse_args(opt_parser);
+print(opt);
 
 # Check single-mode parameters
 if (!is.null(opt$manifest)) {
@@ -57,14 +63,18 @@ if(manifest.mode) {
 for (row in seq_len(nrow(M))) {
 
    print(paste('Sampling:', M$features[row]))
-   
+
    # Read the three images and convert to matrices
    f.nii <- readNIfTI(as.character(M$features[row]));
    nfeat <- dim(f.nii)[length(dim(f.nii))];
    f.mat <- matrix(f.nii[],, nfeat);
 
    t.nii <- readNIfTI(as.character(M$target[row]));
-   t.mat <- matrix(t.nii[],,1);
+   if(opt$channel > 0) {
+      t.mat <- matrix(t.nii[,,,,opt$channel],,1);
+   } else {
+      t.mat <- matrix(t.nii[],,1);
+   }
 
    # Number of samples taken
    sfg = opt$sfg * dim(f.nii)[3];
@@ -72,7 +82,7 @@ for (row in seq_len(nrow(M))) {
 
    # Apply mask if provided
    if(M$mask[row] != "") {
-      m.nii <- readNIfTI(M$mask[row]);
+      m.nii <- readNIfTI(as.character(M$mask[row]));
       m.mat <- matrix(m.nii[],,1);
       r.fg <- m.mat > 0;
       r.bg <- m.mat == 0;
@@ -81,6 +91,7 @@ for (row in seq_len(nrow(M))) {
       r.fg <- !is.na(t.mat)
       r.bg <- is.na(t.mat)
    }
+
 
    # Training sample - inside the mask
    f.fg <- f.mat[r.fg,];
@@ -130,6 +141,11 @@ df <- data.frame(y=all.t.sam, x=all.f.sam)
 # Test
 model <- rlm(y ~ ., data=df);
 print(model)
+
+# Save model
+if(!is.null(opt$param)) {
+    write.csv(model$coefficients, opt$param, quote=FALSE, col.names=FALSE)
+}
 
 # Second pass: prediction
 for (row in seq_len(nrow(M))) {

@@ -500,53 +500,53 @@ function set_block_stain_vars()
   # Directory for stain-to-NISSL registration
   IHC_TO_NISSL_DIR=$ROOT/work/$id/ihc_reg/$block/reg_${stain}_to_NISSL
 
-  # New: directory for stack_greedy IHC/NISSL reconstruction
-  IHC_RECON_ROOT=$ROOT/work/$id/ihc_reg/$block/recon_${stain}_to_NISSL
-  IHC_RECON_DIR=$IHC_RECON_ROOT/recon
-  IHC_SPLAT_DIR=$IHC_RECON_ROOT/splat
-  IHC_RECON_MANIFEST=$IHC_RECON_ROOT/recon_manifest.txt
-
-  IHC_NISSL_TARGET_MANIFEST=$IHC_RECON_ROOT/nissl_target_manifest.txt
-  IHC_NISSL_TARGET=$IHC_RECON_ROOT/${id}_${block}_${stain}_nissl_target.nii.gz
-
-  # Splatted IHC image for this stain
-  IHC_RGB_SPLAT_BASENAME=$IHC_SPLAT_DIR/${id}_${block}_splat_${stain}_rgb
-  IHC_RGB_SPLAT_MANIFEST=${IHC_RGB_SPLAT_BASENAME}_manifest.txt
-  IHC_RGB_SPLAT_IMG=${IHC_RGB_SPLAT_BASENAME}.nii.gz
-  IHC_RGB_SPLAT_IMG_TOHIRES=${IHC_RGB_SPLAT_BASENAME}_tohires.nii.gz
-
-  # Splatted mask image for this stain
-  IHC_MASK_SPLAT_BASENAME=$IHC_SPLAT_DIR/${id}_${block}_splat_${stain}_mask
-  IHC_MASK_SPLAT_MANIFEST=${IHC_MASK_SPLAT_BASENAME}_manifest.txt
-  IHC_MASK_SPLAT_IMG=${IHC_MASK_SPLAT_BASENAME}.nii.gz
-  IHC_MASK_SPLAT_IMG_TOHIRES=${IHC_MASK_SPLAT_BASENAME}_tohires.nii.gz
-
-  # Splatted registration validation curves
-  IHC_REGEVAL_SPLAT_BASENAME=$IHC_SPLAT_DIR/${id}_${block}_splat_${stain}_regeval
-  IHC_REGEVAL_SPLAT_MANIFEST=${IHC_REGEVAL_SPLAT_BASENAME}_manifest.txt
-  IHC_REGEVAL_SPLAT_IMG=${IHC_REGEVAL_SPLAT_BASENAME}.nii.gz
-  IHC_REGEVAL_METRIC_DIR=$HISTO_REGEVAL_DIR/metric_${stain}
-
-  # QC image
-  HISTO_IHC_TO_NISSL_QC_IMAGE=$SPECIMEN_QCDIR/${id}_${block}_${stain}_to_nissl_qc.png
-
+#  # New: directory for stack_greedy IHC/NISSL reconstruction
+#  IHC_RECON_ROOT=$ROOT/work/$id/ihc_reg/$block/recon_${stain}_to_NISSL
+#  IHC_RECON_DIR=$IHC_RECON_ROOT/recon
+#  IHC_SPLAT_DIR=$IHC_RECON_ROOT/splat
+#  IHC_RECON_MANIFEST=$IHC_RECON_ROOT/recon_manifest.txt
+#
+#  IHC_NISSL_TARGET_MANIFEST=$IHC_RECON_ROOT/nissl_target_manifest.txt
+#  IHC_NISSL_TARGET=$IHC_RECON_ROOT/${id}_${block}_${stain}_nissl_target.nii.gz
+#
 #  # Splatted IHC image for this stain
-#  IHC_RGB_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_rgb
+#  IHC_RGB_SPLAT_BASENAME=$IHC_SPLAT_DIR/${id}_${block}_splat_${stain}_rgb
 #  IHC_RGB_SPLAT_MANIFEST=${IHC_RGB_SPLAT_BASENAME}_manifest.txt
 #  IHC_RGB_SPLAT_IMG=${IHC_RGB_SPLAT_BASENAME}.nii.gz
 #  IHC_RGB_SPLAT_IMG_TOHIRES=${IHC_RGB_SPLAT_BASENAME}_tohires.nii.gz
 #
 #  # Splatted mask image for this stain
-#  IHC_MASK_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_mask
+#  IHC_MASK_SPLAT_BASENAME=$IHC_SPLAT_DIR/${id}_${block}_splat_${stain}_mask
 #  IHC_MASK_SPLAT_MANIFEST=${IHC_MASK_SPLAT_BASENAME}_manifest.txt
 #  IHC_MASK_SPLAT_IMG=${IHC_MASK_SPLAT_BASENAME}.nii.gz
 #  IHC_MASK_SPLAT_IMG_TOHIRES=${IHC_MASK_SPLAT_BASENAME}_tohires.nii.gz
 #
 #  # Splatted registration validation curves
-#  IHC_REGEVAL_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_regeval
+#  IHC_REGEVAL_SPLAT_BASENAME=$IHC_SPLAT_DIR/${id}_${block}_splat_${stain}_regeval
 #  IHC_REGEVAL_SPLAT_MANIFEST=${IHC_REGEVAL_SPLAT_BASENAME}_manifest.txt
 #  IHC_REGEVAL_SPLAT_IMG=${IHC_REGEVAL_SPLAT_BASENAME}.nii.gz
 #  IHC_REGEVAL_METRIC_DIR=$HISTO_REGEVAL_DIR/metric_${stain}
+
+  # QC image
+  HISTO_IHC_TO_NISSL_QC_IMAGE=$SPECIMEN_QCDIR/${id}_${block}_${stain}_to_nissl_qc.png
+
+  # Splatted IHC image for this stain
+  IHC_RGB_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_rgb
+  IHC_RGB_SPLAT_MANIFEST=${IHC_RGB_SPLAT_BASENAME}_manifest.txt
+  IHC_RGB_SPLAT_IMG=${IHC_RGB_SPLAT_BASENAME}.nii.gz
+  IHC_RGB_SPLAT_IMG_TOHIRES=${IHC_RGB_SPLAT_BASENAME}_tohires.nii.gz
+
+  # Splatted mask image for this stain
+  IHC_MASK_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_mask
+  IHC_MASK_SPLAT_MANIFEST=${IHC_MASK_SPLAT_BASENAME}_manifest.txt
+  IHC_MASK_SPLAT_IMG=${IHC_MASK_SPLAT_BASENAME}.nii.gz
+  IHC_MASK_SPLAT_IMG_TOHIRES=${IHC_MASK_SPLAT_BASENAME}_tohires.nii.gz
+
+  # Splatted registration validation curves
+  IHC_REGEVAL_SPLAT_BASENAME=$IHC_TO_NISSL_DIR/${id}_${block}_splat_${stain}_regeval
+  IHC_REGEVAL_SPLAT_MANIFEST=${IHC_REGEVAL_SPLAT_BASENAME}_manifest.txt
+  IHC_REGEVAL_SPLAT_IMG=${IHC_REGEVAL_SPLAT_BASENAME}.nii.gz
+  IHC_REGEVAL_METRIC_DIR=$HISTO_REGEVAL_DIR/metric_${stain}
 
   # Restore trace state
   set +vx; eval $tracestate
@@ -3214,15 +3214,14 @@ function chunked_warp_reslice()
   local mov_header_fix=$TMPDIR/moving_header_fix.nii.gz
   c2d $mov_coord_ref $moving -mbb -o $mov_header_fix
 
-  # Apply the transformation
-  local reslice_tmp=$TMPDIR/tmp_reslice.nii.gz
-  greedy -d 2 $greedy_opts -rf $fixed_mask -rm $mov_header_fix $reslice_tmp -r $warp
-
   # Background defaults to zero
   if [[ ! $background ]]; then
     background="0"
   fi
 
+  # Apply the transformation
+  local reslice_tmp=$TMPDIR/tmp_reslice.nii.gz
+  greedy -d 2 $greedy_opts -rb $background -rf $fixed_mask -rm $mov_header_fix $reslice_tmp -r $warp
 
   # Erosion defaults to zero too
   if [[ ! $dilation ]]; then
@@ -3448,16 +3447,293 @@ function recon_ihc_to_nissl_all()
 }
 
 
-# Perform IHC to NISSL reconstruction for one stain
-function match_ihc_to_nissl()
+# Match IHC to NISSL for specific slide (internal function)
+function match_ihc_to_nissl_slice_internal()
 {
-  local id block stain skip_reg args
+  # Read the parameters
+  local svs stain section slice skip_reg args
+  read -r svs stain section slice skip_reg args <<< "$@"
 
-  # What specimen and block are we doing this for?
-  read -r id block stain skip_reg args <<< "$@"
+  # Find the matching NISSL slide
+  find_nissl_slide $section
 
-  # Call the preprocessing script to make sure all histology has scalar files
-  preproc_histology $id $block
+  if [[ ! $MATCHED_NISSL_SVS ]]; then continue; fi
+
+  # Set the NISSL slide variables
+  set_ihc_slice_vars $id $block $MATCHED_NISSL_SVS NISSL $section $MATCHED_NISSL_SLIDE
+
+  # TODO: delete this!!!
+  ##if [[ ! -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
+  ##  continue
+  ##fi
+
+  # Copy important variables
+  local NISSL_SLIDE_RGB=$SLIDE_RGB
+  local NISSL_SLIDE_HEM_SCALAR=$SLIDE_HEM_SCALAR
+  local NISSL_SLIDE_MASK=$SLIDE_MASK
+  local NISSL_SLIDE_LONG_NAME=$SLIDE_LONG_NAME
+
+  # The mask and RGB of the NISSL slide must be present
+  if [[ ! -f $NISSL_SLIDE_HEM_SCALAR || ! -f $NISSL_SLIDE_MASK ]]; then
+    echo "Missing NISSL slide $MATCHED_NISSL_SVS for IHC slide $svs"
+    return
+  fi
+
+  # Set the slide variables
+  set_ihc_slice_vars $id $block $svs $stain $section $slice
+
+  # Create the registration directory for this
+  mkdir -p $SLIDE_IHC_TO_NISSL_REGDIR
+
+  # Create a working directory in temp space
+  local WDIR="$TMPDIR/$svs"
+  mkdir -p $WDIR
+  ### rm -rf $WDIR/*
+
+  # Check the manifest file for the presence of override parameters
+  local PLINE N_CHUNKS FLIP
+  PLINE=$(grep "^$id,$block,$stain,$section" $ROOT/manifest/ihc_nissl_reg.csv 2> /dev/null \
+    | tail -n 1 | cut -d, -f 5,6)
+  if [[ $PLINE ]]; then
+    IFS=, read -r N_CHUNKS FLIP <<< "$PLINE"
+  else
+    N_CHUNKS=8
+    FLIP=any
+  fi
+
+  if [[ $skip_reg -eq 1 ]]; then
+
+    echo "Skipping registration"
+
+  else
+    local SLIDE_RGB_NISSL_LIKE="$WDIR/ihc_rgb_nissl_like.nii.gz"
+
+    # Perform the whole-slide registration (rigid and deformable)
+    greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
+      -ia-image-centers -m WNCC 8x8 -bg NaN -wncc-mask-dilate \
+      -n 200x200x40x0 -search 20000 $FLIP 10 -o $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
+
+    # Fit each color channel
+    greedy -d 2 -rf $NISSL_SLIDE_RGB -rb 255 -rm $SLIDE_RGB $WDIR/tau_fit_init.nii.gz \
+      -r $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
+
+    for i in 0 1 2; do
+      c2d -mcs $NISSL_SLIDE_RGB -pick $i -o $WDIR/nissl_comp_$i.nii.gz
+      Rscript "$ROOT/scripts/fit_multichannel.R" \
+        -i $WDIR/tau_fit_init.nii.gz -t $WDIR/nissl_comp_$i.nii.gz -m $NISSL_SLIDE_MASK \
+        -o $WDIR/dummy$i.nii.gz --sfg 10000 --sbg 1000 -p $WDIR/param_$i.csv;
+
+      # Apply fitting to the IHC image
+      local INT X0 X1 X2
+      read -r INT X0 X1 X2 <<<$(awk -F, 'NR>1 {print $2}' $WDIR/param_$i.csv)
+      c2d -mcs $SLIDE_RGB -wsum $X0 $X1 $X2 -shift $INT -clip 0 255 -o $WDIR/fit_$i.nii.gz
+    done
+
+    c2d $WDIR/fit_0.nii.gz $WDIR/fit_1.nii.gz $WDIR/fit_2.nii.gz -omc $SLIDE_RGB_NISSL_LIKE
+
+    # Chunk up the registration mask
+    image_graph_cut -u 1.2 -n 100 -c 4 0.1 $NISSL_SLIDE_MASK $SLIDE_IHC_NISSL_CHUNKING_MASK $N_CHUNKS
+
+    # Patterns for chunk rigid and warp transformations
+    PT_CHUNK_RIGID="$WDIR/chunk_rigid_%02d.mat"
+    PT_CHUNK_WARP="$WDIR/chunk_warp_%02d.nii.gz"
+    PT_CHUNK_INVWARP="$WDIR/chunk_warp_inv_%02d.nii.gz"
+    local PT_FIT_SOURCE="$WDIR/fit_source.nii.gz"
+
+    # Perform chunk-wise registration
+
+    multi_chunk_greedy -d 2 -cm $SLIDE_IHC_NISSL_CHUNKING_MASK -o $PT_CHUNK_RIGID \
+      -i $NISSL_SLIDE_RGB $SLIDE_RGB_NISSL_LIKE -ia $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
+      -m WNCC 4x4 -bg NaN -wncc-mask-dilate -n 600x600x200x0 \
+      -a -dof 6 -search 10000 10 5 -wreg 0.05
+
+    # Apply rigid transforms
+    for fn in $WDIR/chunk_rigid_*.mat; do
+      greedy -d 2 -rf $NISSL_SLIDE_RGB -rb 255 -rm $SLIDE_RGB ${fn/.mat/_reslice_rigid.nii.gz} -r $fn
+    done
+
+    # Make a frankenstein image for fitting
+    c2d -mcs $WDIR/chunk*_reslice_rigid.nii.gz \
+      -foreach -stretch 0 255 255 0 -endfor \
+      $SLIDE_IHC_NISSL_CHUNKING_MASK -replace 0 255 -popas M \
+      -foreach-comp 3 -push M -split -pop -reorder 0.5 -wsv -stretch 0 255 255 0 -endfor \
+      -omc $PT_FIT_SOURCE
+
+    # Fit each color channel
+    for i in 0 1 2; do
+      c2d -mcs $NISSL_SLIDE_RGB -pick $i -o $WDIR/nissl_comp_$i.nii.gz
+      Rscript "$ROOT/scripts/fit_multichannel.R" \
+        -i $PT_FIT_SOURCE -t $WDIR/nissl_comp_$i.nii.gz -m $NISSL_SLIDE_MASK \
+        -o $WDIR/dummy$i.nii.gz --sfg 10000 --sbg 1000 -p $WDIR/param_$i.csv;
+
+      # Apply fitting to the IHC image
+      local INT X0 X1 X2
+      read -r INT X0 X1 X2 <<<$(awk -F, 'NR>1 {print $2}' $WDIR/param_$i.csv)
+      c2d -mcs $SLIDE_RGB -wsum $X0 $X1 $X2 -shift $INT -clip 0 255 -o $WDIR/fit_$i.nii.gz
+    done
+
+    c2d $WDIR/fit_0.nii.gz $WDIR/fit_1.nii.gz $WDIR/fit_2.nii.gz -omc $SLIDE_RGB_NISSL_LIKE
+
+    # Perform deformable chunked (TODO: add -wp)
+    multi_chunk_greedy -d 2 -cm $SLIDE_IHC_NISSL_CHUNKING_MASK \
+      -sv -o $PT_CHUNK_WARP -oinv $PT_CHUNK_INVWARP \
+      -it $PT_CHUNK_RIGID \
+      -i $NISSL_SLIDE_RGB $SLIDE_RGB_NISSL_LIKE \
+      -m WNCC 4x4 -bg NaN -ref-pad 32x32 -wncc-mask-dilate -n 400x200x100x20 -s 0.6mm 0.1mm -e 0.25
+
+    # Create a binary version (chunking loses connected component, hence)
+    c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 \
+      -type uchar -o $SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY
+
+    # Also create an expanded version of the mask (labels extrapolated everywhere)
+    c2d $SLIDE_IHC_NISSL_CHUNKING_MASK \
+      -stretch 0 $N_CHUNKS $N_CHUNKS 0 -split -pop \
+      -foreach -sdt -scale -1 -endfor -vote \
+      -stretch 0 $((N_CHUNKS-1)) $N_CHUNKS 1 \
+      -o $SLIDE_IHC_NISSL_CHUNKING_MASK_EXTRAPOLATED
+
+    # Extract mask from images
+    for ((i=1;i<=$N_CHUNKS;i++)); do
+
+      local I_MASK=$WDIR/chunk_mask_${i}.nii.gz
+      local I_MASK_EXTRAPOLATED=$WDIR/chunk_mask_extrap_${i}.nii.gz
+      local I_RIGID=$(printf $PT_CHUNK_RIGID $i)
+      local I_WARP=$(printf $PT_CHUNK_WARP $i)
+      local I_WARP_INV=$(printf $PT_CHUNK_INVWARP $i)
+      local I_COMP=$WDIR/chuck_comp_warp_${i}.nii.gz
+      local I_COMP_MASKED=$WDIR/chuck_comp_warp_masked_${i}.nii.gz
+      local I_MASK_TO_IHC=$WDIR/chunk_mask_to_ihc_${i}.nii.gz
+      local I_MASK_TO_IHC_RIGID=$WDIR/chunk_mask_rigid_to_ihc_${i}.nii.gz
+
+      # Extract particular region
+      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh $i $i 1 0 -o $I_MASK
+      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK_EXTRAPOLATED -thresh $i $i 1 0 -o $I_MASK_EXTRAPOLATED
+
+      # Compose rigid and deformable
+      greedy -d 2 -rf $NISSL_SLIDE_RGB -r $I_WARP $I_RIGID -rc $I_COMP
+
+      # Map the mask into the moving (IHC) image space for overlap computation
+      greedy -d 2 -rf $SLIDE_RGB -ri NN \
+        -rm $I_MASK $I_MASK_TO_IHC \
+        -r $I_RIGID,-1 $I_WARP_INV
+
+      # Also map the mask using rigid only
+      greedy -d 2 -rf $SLIDE_RGB -ri NN \
+        -rm $I_MASK $I_MASK_TO_IHC_RIGID \
+        -r $I_RIGID,-1
+
+      # Mask the warp (use extrapolation to have extended warp outside pieces)
+      c2d -mcs $I_COMP $I_MASK_EXTRAPOLATED -popas M -foreach -push M -times -endfor -omc $I_COMP_MASKED
+
+    done
+
+    # Combine the composed warps
+    c2d -mcs $WDIR/chuck_comp_warp_masked_*.nii.gz \
+      -foreach-comp 2 -mean -scale $N_CHUNKS -endfor \
+      -omc $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
+
+    # Combine the masks in IHC space
+    c3d $WDIR/chunk_mask_to_ihc_*.nii.gz \
+      -accum -add -endaccum -o $WDIR/overlap_ihc.nii.gz
+
+    # Generate edge overlap image in NISSL space using complete warps
+    c2d \
+      $SLIDE_IHC_NISSL_CHUNKING_MASK -popas R \
+      $WDIR/chunk_mask_to_ihc_*.nii.gz \
+      -foreach -insert R 1 -reslice-matrix $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
+      -scale 255 -canny 3x3vox 0.5 2.0 -dilate 1 1x1 -endfor \
+      -accum -max -endaccum -stretch 0 99.9% 1 0 -clip 0 1 -popas C \
+      -mcs $SLIDE_RGB -foreach \
+      -insert R 1 -background 255 -reslice-matrix $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID  \
+      -push C -times -endfor \
+      -type uchar -omc $WDIR/edges_ihc.png
+
+    # Generate edge overlap image in NISSL space using multi-rigid only
+    c2d \
+      $SLIDE_IHC_NISSL_CHUNKING_MASK -popas R \
+      $WDIR/chunk_mask_rigid_to_ihc_*.nii.gz \
+      -foreach -insert R 1 -reslice-matrix $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
+      -scale 255 -canny 3x3vox 0.5 2.0 -dilate 1 1x1 -endfor \
+      -accum -max -endaccum -stretch 0 99.9% 1 0 -clip 0 1 -popas C \
+      -mcs $SLIDE_RGB -foreach \
+      -insert R 1 -background 255 -reslice-matrix $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID  \
+      -push C -times -endfor \
+      -type uchar -omc $WDIR/edges_ihc_rigid.png
+
+   # Map the overlap image back into the NISSL space (for display)
+    greedy -d 2 -rf $NISSL_SLIDE_RGB \
+      -ri NN -rm $WDIR/overlap_ihc.nii.gz $WDIR/overlap_nissl.nii.gz \
+      -r $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
+
+    # Use the overlap image to generate statistics and a heat map
+    c2d $WDIR/overlap_nissl.nii.gz -as X \
+      -pad 1x1vox 1x1vox $N_CHUNKS -colormap jet \
+      -foreach -insert X 1 -reslice-identity -endfor \
+      -type uchar -omc $WDIR/ihc_overlap.png
+
+    local S1=$(c2d $WDIR/overlap_nissl.nii.gz -clip 0 1 -voxel-sum | awk '{print $3}')
+    local S2=$(c2d $WDIR/overlap_nissl.nii.gz -shift -1 -clip 0 7 -voxel-sum | awk '{print $3}')
+    echo $S1 $S2 | awk '{printf "{\"overlap_ratio\": %f}\n", $2*1.0/$1}' \
+      > $SLIDE_IHC_TO_NISSL_OVERLAP_STAT
+
+    # Reslice using the chunking warp
+    chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_RGB $SLIDE_RGB \
+      $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING 255
+
+    # Reslice using the chunking warp
+    local TMP_RESLICE=$WDIR/reslice_temp.nii.gz
+    greedy -d 2 -rf $NISSL_SLIDE_RGB -rm $SLIDE_RGB $TMP_RESLICE \
+      -r $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
+
+    c2d -mcs $TMP_RESLICE \
+      $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 -popas M \
+      -foreach -push M -times -push M -thresh 0 0 255 0 -add -endfor \
+      -omc $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING
+
+    # Generate some PNG images for display
+    c2d -mcs $NISSL_SLIDE_RGB -type uchar -omc $WDIR/nissl.png
+    c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -stretch 0 $N_CHUNKS 0 255 \
+      -type uchar -omc $WDIR/mask.png
+    c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -popas R -mcs $SLIDE_RGB \
+      -foreach -insert R 1 -background 255 -reslice-matrix $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID -endfor \
+      -type uchar -omc $WDIR/ihc_global.png
+    c2d -mcs $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING \
+      -type uchar -omc $WDIR/ihc_chunking.png
+
+    for MYPNG in nissl.png ihc_global.png mask.png ihc_chunking.png edges_ihc.png edges_ihc_rigid.png; do
+      $ROOT/scripts/ashs_grid.sh -o 0.25 -s 25 -c "white" $WDIR/$MYPNG $WDIR/$MYPNG
+      $ROOT/scripts/ashs_grid.sh -o 0.75 -s 125 -c "white" $WDIR/$MYPNG $WDIR/$MYPNG
+    done
+
+    montage ${IMAGEMAGICK_FONT_CMD} -tile 3x2 -geometry +5+5 -mode Concatenate \
+      $WDIR/nissl.png \
+      $WDIR/mask.png \
+      $WDIR/edges_ihc.png \
+      $WDIR/ihc_chunking.png \
+      $WDIR/ihc_global.png \
+      $WDIR/edges_ihc_rigid.png \
+      $SLIDE_IHC_TO_NISSL_QC
+
+  fi
+
+  # Does the registration validation exist? If so, we need to also reslice it to
+  # the NISSL space
+  # TODO: this is broken - fix the regval code!
+  if [[ -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
+
+    # Reslice to NISSL space using the chunking warp (with erosion)
+    chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_REGEVAL_CLEAN_PNG $SLIDE_RGB \
+      $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_CHUNKING \
+      0 20   "-ri LABEL 0.2vox"
+
+  fi
+
+}
+
+function match_ihc_to_nissl_slice()
+{
+  local id block stain section args
+  read -r id block stain section <<< "$@"
 
   # Set density variables
   set_block_stain_vars $id $block $stain
@@ -3465,7 +3741,30 @@ function match_ihc_to_nissl()
   # Create output directory
   mkdir -p $IHC_TO_NISSL_DIR
 
-  # Create a splatting manifest
+  # Iterate over slides in the manifest
+  while IFS=, read -r svs slide_stain dummy slide_section slice args; do
+
+    # Only consider the current stain
+    if [[ $slide_stain != $stain || $slide_section -ne $section ]]; then continue; fi
+
+    match_ihc_to_nissl_slice_internal $svs $stain $section $slice
+
+  done < $HISTO_MATCH_MANIFEST
+
+}
+
+# Perform IHC to NISSL reconstruction for one stain
+function match_ihc_to_nissl_finalize()
+{
+  local stain id block args
+
+  # What specimen and block are we doing this for?
+  read -r stain id block args <<< "$@"
+
+  # Set density variables
+  set_block_stain_vars $id $block $stain
+
+  # Create a splatting manifests
   rm -rf $IHC_RGB_SPLAT_MANIFEST $IHC_REGEVAL_SPLAT_MANIFEST $IHC_MASK_SPLAT_MANIFEST
 
   # Iterate over slides in the manifest
@@ -3473,172 +3772,6 @@ function match_ihc_to_nissl()
 
     # Only consider the current stain
     if [[ $slide_stain != $stain ]]; then continue; fi
-
-    # Find the matching NISSL slide
-    find_nissl_slide $section
-
-    if [[ ! $MATCHED_NISSL_SVS ]]; then continue; fi
-
-    # Set the NISSL slide variables
-    set_ihc_slice_vars $id $block $MATCHED_NISSL_SVS NISSL $section $MATCHED_NISSL_SLIDE
-
-    # TODO: delete this!!!
-    ##if [[ ! -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
-    ##  continue
-    ##fi
-
-    # Copy important variables
-    local NISSL_SLIDE_RGB=$SLIDE_RGB
-    local NISSL_SLIDE_HEM_SCALAR=$SLIDE_HEM_SCALAR
-    local NISSL_SLIDE_MASK=$SLIDE_MASK
-    local NISSL_SLIDE_LONG_NAME=$SLIDE_LONG_NAME
-
-    # The mask and RGB of the NISSL slide must be present
-    if [[ ! -f $NISSL_SLIDE_HEM_SCALAR || ! -f $NISSL_SLIDE_MASK ]]; then
-      echo "Missing NISSL slide $MATCHED_NISSL_SVS for IHC slide $svs"
-      continue
-    fi
-
-    # Set the slide variables
-    set_ihc_slice_vars $id $block $svs $stain $section $slice
-
-    # Create the registration directory for this
-    mkdir -p $SLIDE_IHC_TO_NISSL_REGDIR
-
-    # Number of chunks
-    local N_CHUNKS=8
-
-    if [[ $skip_reg -eq 1 ]]; then
-
-      echo "Skipping registration"
-
-    else
-
-      # Perform the whole-slide registration (rigid and deformable)
-      greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_HEM_SCALAR $SLIDE_HEM_SCALAR -o $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID \
-        -m NCC 16x16 -n 100x40x10x0 -search 10000 flip 5 -ia-image-centers -gm $NISSL_SLIDE_MASK
-
-      # Chunk up the registration mask
-      local NISSL_MASK_CC=$TMPDIR/nissl_mask_cc.nii.gz
-      c2d $NISSL_SLIDE_MASK -comp -thresh 1 1 1 0 -o $NISSL_MASK_CC
-
-      image_graph_cut -u 2 -n 20 $NISSL_MASK_CC $SLIDE_IHC_NISSL_CHUNKING_MASK $N_CHUNKS
-
-      # Create a binary version (chunking loses connected component, hence)
-      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 \
-        -type uchar -o $SLIDE_IHC_NISSL_CHUNKING_MASK_BINARY
-
-      # Also create an expanded version of the mask (labels extrapolated everywhere)
-      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK \
-        -stretch 0 $N_CHUNKS $N_CHUNKS 0 -split -pop \
-        -foreach -sdt -scale -1 -endfor -vote \
-        -stretch 0 $((N_CHUNKS-1)) $N_CHUNKS 1 \
-        -o $SLIDE_IHC_NISSL_CHUNKING_MASK_EXTRAPOLATED
-
-      # Extract mask from images
-      for ((i=1;i<=$N_CHUNKS;i++)); do
-
-        local I_MASK=$TMPDIR/chunk_mask_${i}.nii.gz
-        local I_MASK_EXTRAPOLATED=$TMPDIR/chunk_mask_extrap_${i}.nii.gz
-        local I_RIGID=$TMPDIR/chunk_rigid_${i}.mat
-        local I_WARP=$TMPDIR/chunk_warp_${i}.nii.gz
-        local I_WARP_INV=$TMPDIR/chunk_warp_inv_${i}.nii.gz
-        local I_COMP=$TMPDIR/chuck_comp_warp_${i}.nii.gz
-        local I_COMP_MASKED=$TMPDIR/chuck_comp_warp_masked_${i}.nii.gz
-        local I_MASK_TO_IHC=$TMPDIR/chunk_mask_to_ihc_${i}.nii.gz
-
-        # Extract particular region
-        c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh $i $i 1 0 -o $I_MASK
-        c2d $SLIDE_IHC_NISSL_CHUNKING_MASK_EXTRAPOLATED -thresh $i $i 1 0 -o $I_MASK_EXTRAPOLATED
-
-        # Perform rigid registration
-        greedy -d 2 -a -dof 6 \
-          -i $NISSL_SLIDE_HEM_SCALAR $SLIDE_HEM_SCALAR \
-          -o $I_RIGID -m NCC 16x16 -n 100x40x10x0 \
-          -ia $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID -gm $I_MASK
-
-        # Peform deformable
-        greedy -d 2 \
-          -i $NISSL_SLIDE_HEM_SCALAR $SLIDE_HEM_SCALAR \
-          -it $I_RIGID -o $I_WARP -oinv $I_WARP_INV -sv -m NCC 16x16 -n 100x40x10x0 \
-          -s 3.0mm 0.5mm -wp 0 -gm $I_MASK
-
-        # Compose rigid and deformable
-        greedy -d 2 -rf $NISSL_SLIDE_HEM_SCALAR -r $I_WARP $I_RIGID -rc $I_COMP
-
-        # Map the mask into the moving (IHC) image space for overlap computation
-        greedy -d 2 -rf $SLIDE_HEM_SCALAR -ri NN \
-          -rm $I_MASK $I_MASK_TO_IHC \
-          -r $I_RIGID,-1 $I_WARP_INV
-
-        # Mask the warp (use extrapolation to have extended warp outside pieces)
-        c2d -mcs $I_COMP $I_MASK_EXTRAPOLATED -popas M -foreach -push M -times -endfor -omc $I_COMP_MASKED
-
-      done
-
-      # Combine the composed warps
-      c2d -mcs $TMPDIR/chuck_comp_warp_masked_*.nii.gz \
-        -foreach-comp 2 -mean -scale $N_CHUNKS -endfor \
-        -omc $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
-
-      # Combine the masks in IHC space
-      c3d $TMPDIR/chunk_mask_to_ihc_*.nii.gz \
-        -accum -add -endaccum -o $TMPDIR/overlap_ihc.nii.gz
-
-      # Map the overlap image back into the NISSL space (for display)
-      greedy -d 2 -rf $NISSL_SLIDE_RGB \
-        -ri NN -rm $TMPDIR/overlap_ihc.nii.gz $TMPDIR/overlap_nissl.nii.gz \
-        -r $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
-
-      # Use the overlap image to generate statistics and a heat map
-      c2d $TMPDIR/overlap_nissl.nii.gz -as X \
-        -pad 1x1vox 1x1vox $N_CHUNKS -colormap jet \
-        -foreach -insert X 1 -reslice-identity -endfor \
-        -type uchar -omc $TMPDIR/ihc_overlap.png
-
-      local S1=$(c2d $TMPDIR/overlap_nissl.nii.gz -clip 0 1 -voxel-sum | awk '{print $3}')
-      local S2=$(c2d $TMPDIR/overlap_nissl.nii.gz -shift -1 -clip 0 7 -voxel-sum | awk '{print $3}')
-      echo $S1 $S2 | awk '{printf "{\"overlap_ratio\": %f}\n", $2*1.0/$1}' \
-        > $SLIDE_IHC_TO_NISSL_OVERLAP_STAT
-
-      # Reslice using the chunking warp
-      chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_RGB $SLIDE_RGB \
-        $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING 255
-
-      # Reslice using the chunking warp
-      local TMP_RESLICE=$TMPDIR/reslice_temp.nii.gz
-      greedy -d 2 -rf $NISSL_SLIDE_RGB -rm $SLIDE_RGB $TMP_RESLICE \
-        -r $SLIDE_IHC_TO_NISSL_CHUNKING_WARP
-
-      c2d -mcs $TMP_RESLICE \
-        $SLIDE_IHC_NISSL_CHUNKING_MASK -thresh 1 inf 1 0 -popas M \
-        -foreach -push M -times -push M -thresh 0 0 255 0 -add -endfor \
-        -omc $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING
-
-      # Generate some PNG images for display
-      c2d -mcs $NISSL_SLIDE_RGB -type uchar -omc $TMPDIR/nissl.png
-      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -stretch 0 $N_CHUNKS 0 255 \
-        -type uchar -omc $TMPDIR/mask.png
-      c2d $SLIDE_IHC_NISSL_CHUNKING_MASK -popas R -mcs $SLIDE_RGB \
-        -foreach -insert R 1 -reslice-matrix $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID -endfor \
-        -type uchar -omc $TMPDIR/ihc_global.png
-      c2d -mcs $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING \
-        -type uchar -omc $TMPDIR/ihc_chunking.png
-
-      for MYPNG in nissl.png ihc_global.png mask.png ihc_chunking.png ihc_overlap.png; do
-        $ROOT/scripts/ashs_grid.sh -o 0.25 -s 25 -c "white" $TMPDIR/$MYPNG $TMPDIR/$MYPNG
-        $ROOT/scripts/ashs_grid.sh -o 0.75 -s 125 -c "white" $TMPDIR/$MYPNG $TMPDIR/$MYPNG
-      done
-
-      montage ${IMAGEMAGICK_FONT_CMD} -tile 3x2 -geometry +5+5 -mode Concatenate \
-        $TMPDIR/nissl.png \
-        $TMPDIR/ihc_global.png \
-        $TMPDIR/mask.png \
-        $TMPDIR/ihc_chunking.png \
-        $TMPDIR/ihc_overlap.png \
-        $SLIDE_IHC_TO_NISSL_QC
-
-    fi
 
     # Generate the manifest for processed slides
     echo $MATCHED_NISSL_SVS $SLIDE_IHC_TO_NISSL_RESLICE_CHUNKING >> $IHC_RGB_SPLAT_MANIFEST
@@ -3651,12 +3784,6 @@ function match_ihc_to_nissl()
     # the NISSL space
     # TODO: this is broken - fix the regval code!
     if [[ -f $SLIDE_REGEVAL_CLEAN_PNG ]]; then
-
-      # Reslice to NISSL space using the chunking warp (with erosion)
-      chunked_warp_reslice $SLIDE_IHC_NISSL_CHUNKING_MASK $SLIDE_REGEVAL_CLEAN_PNG $SLIDE_RGB \
-        $SLIDE_IHC_TO_NISSL_CHUNKING_WARP $SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_CHUNKING \
-        0 20   "-ri LABEL 0.2vox"
-
       echo $MATCHED_NISSL_SVS $SLIDE_IHC_REGEVAL_TO_NISSL_RESLICE_CHUNKING \
         >> $IHC_REGEVAL_SPLAT_MANIFEST
     fi
@@ -3675,13 +3802,52 @@ function match_ihc_to_nissl()
 
   # Splat the regeval
   if [[ -f $IHC_REGEVAL_SPLAT_MANIFEST ]]; then
-
     splat_block $id $block $IHC_REGEVAL_SPLAT_MANIFEST \
       voliter-20 $IHC_REGEVAL_SPLAT_IMG \
       "-ztol 0.2 -ri NN -rb 0 -xy 0.05"
-
   fi
 }
+
+function match_ihc_to_nissl_all()
+{
+  # Read required and optional parameters
+  stain=${1?}
+  REGEXP=$2
+
+  # Apply pre-processing to the histology
+  run_blockwise preproc_histology "${REGEXP}"
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      for block in $blocks; do
+
+        # Set density variables
+        set_block_stain_vars $id $block $stain
+
+        # Iterate over slides in the manifest
+        while IFS=, read -r svs slide_stain dummy section slice args; do
+
+          # Only consider the current stain
+          if [[ $slide_stain != $stain ]]; then continue; fi
+
+          # Call the internal function
+          pybatch -N "ihc_nissl_slice_${stain}_${id}_${block}_${svs}" "$0" \
+            -s $SKIPLEVEL match_ihc_to_nissl_slice $id $block $stain $section
+
+        done < $HISTO_MATCH_MANIFEST
+      done
+    fi
+  done < "$MDIR/blockface_src.txt"
+
+  # Wait for completion
+  pybatch -w "ihc_nissl_slice_${stain}_*"
+
+  # Run the splatting scripts
+  run_blockwise match_ihc_to_nissl_finalize $stain "${REGEXP}"
+}
+
+
 
 # Generate the tau splat images
 function splat_density()
@@ -3792,26 +3958,6 @@ function splat_density()
     -psn "$stain $model density" -props-set-colormap hot \
     -laa $HIRES_MRI_TO_BFVIS_WARPED -psn "MRI" -props-set-contrast LINEAR 0 0.5 \
     -o $IHC_DENSITY_SPLAT_WORKSPACE
-}
-
-function match_ihc_to_nissl_all()
-{
-  # Read required and optional parameters
-  read -r stain REGEXP skip_reg args <<< "$@"
-
-  # Process the individual blocks
-  while read -r id blocks; do
-    if [[ $id =~ $REGEXP ]]; then
-      for block in $blocks; do
-        # Submit the jobs
-        pybatch -N "ihc_nissl_${stain}_${id}_${block}" -m 8G \
-          "$0" match_ihc_to_nissl $id $block $stain $skip_reg
-      done
-    fi
-  done < "$MDIR/blockface_src.txt"
-
-  # Wait for completion
-  pybatch -w "ihc_nissl_${stain}_*"
 }
 
 function splat_density_all()
