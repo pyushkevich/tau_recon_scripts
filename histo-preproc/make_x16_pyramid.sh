@@ -3,22 +3,34 @@ set -x -e
 
 id=${1?}
 svs=${2?}
+mkdir -p ./data
 
 # Configure gsutil
 gcloud auth activate-service-account --key-file /var/secrets/google/key.json
 gcloud config set project cfn-cluster-test
 
-URLBASE="gs://mtl_histology/$id/histo_proc/$svs/preproc"
+RAWBASE="gs://mtl_histology/$id/histo_raw"
+PREPROCBASE="gs://mtl_histology/$id/histo_proc/$svs/preproc"
 
 # Locate the x16 PNG
-if ! pngfile=$(gsutil ls "$URLBASE/${svs}_x16.png"); then
-  echo "Raw PNG file not found for $id $svs"
+if pngfile=$(gsutil ls "$PREPROCBASE/${svs}_x16.png"); then
+  echo "x16 PNG file found for $id $svs"
+  gsutil cp $pngfile ./data
+elif svsfile=$(gsutil ls "$RAWBASE/${svs}.*"); then
+
+  echo "Raw SVS file found for $id $svs"
+  gsutil cp $svsfile ./data
+  svslocal=$(ls ./data/${svs}.*)
+
+  # Extract a thumbnail and a 40um resolution image
+  python process_raw_slide.py -m -i $svslocal -s ./data/${svs}
+
+else
+  echo "Raw SVS file not found for $id $svs"
   exit -1
 fi
 
 # Locate the tiff
-mkdir -p ./data
-gsutil cp $pngfile ./data
 
 # Run VIPS
 MIDRES_PNG=./data/${svs}_x16.png
@@ -31,4 +43,4 @@ vips tiffsave $MIDRES_TIFF $MIDRES_PTIFF \
   --pyramid --bigtiff
 
 # Upload
-gsutil cp $MIDRES_PTIFF $URLBASE/
+gsutil cp $MIDRES_PTIFF $PREPROCBASE/
