@@ -20,10 +20,12 @@ elif svsfile=$(gsutil ls "$RAWBASE/${svs}.*"); then
 
   echo "Raw SVS file found for $id $svs"
   gsutil cp $svsfile ./data
-  svslocal=$(ls ./data/${svs}.*)
+  echo "hello"
+  svslocal=$(ls ./data/${svs}.{tiff,tif,svs} || true)
+  echo "svslocal=$svslocal"
 
   # Extract a thumbnail and a 40um resolution image
-  python process_raw_slide.py -m -i $svslocal -s ./data/${svs}
+  ./process_raw_slide.py -m -i $svslocal -s ./data/${svs}
 
 else
   echo "Raw SVS file not found for $id $svs"
