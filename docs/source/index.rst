@@ -13,6 +13,8 @@ Pipeline for 3D Reconstruction of Tau Burden Maps from MRI and Histology
     Data Organization <organize_data.md>
     WildCat Training and Whole-Slide Analysis <wildcat_train.md>
     Whole-Slide Histology Processing <wsi_proc.md>
+    Managing Histology Tasks with `svs_to_cloud.sh` <svs_to_cloud.md>
+    Running 3D Reconstruction <recon.md>
 
 Indices and tables
 ==================

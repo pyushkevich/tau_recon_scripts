@@ -70,7 +70,7 @@ At the root of your directory tree, create the following directories:
 
       density/${slide}_Tau_tangles_densitymap.nii.gz  # Tau burden map from WildCat
       
-* To see how these files are generated, see [Histology Processing](histo_proc.md)
+* To see how these files are generated, see [Histology Processing](svs_to_cloud.md)
   
 Additional details on these files are provided below.
 

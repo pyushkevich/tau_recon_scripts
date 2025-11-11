@@ -596,12 +596,6 @@ function density_map_specimen()
       continue
     fi
 
-    # If dryrun, just inform that we would process the slide
-    if [[ $dryrun -gt 0 ]]; then
-      echo "Needs density mapping:" $id $svs
-      continue
-    fi
-
     # Geberate a job ID and YAML file
     JOB=$(echo $id $svs $stain $model | md5sum | cut -c 1-6)
     YAML=/tmp/density_${JOB}.yaml
@@ -636,8 +630,14 @@ function density_map_specimen()
     fi
 
     # Run the yaml
-    echo "Scheduling job $id $svs $YAML"
-    kube apply -f $YAML
+    # If dryrun, just inform that we would process the slide
+    if [[ $dryrun -gt 0 ]]; then
+      echo "Would run: kubectl apply -f $YAML"
+    else
+      echo "Scheduling job $id $svs $YAML"
+      kube apply -f $YAML
+    fi
+
 
   done
 }
