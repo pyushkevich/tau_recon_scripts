@@ -116,7 +116,8 @@ function setup_manual_mri_regs()
 }
 
 # Main entrypoint
-copy_blockface "$@"
+# Do we need raw blockface anymore?
+# copy_blockface "$@"
 copy_mold_mri "$@"
 copy_hires_mri "$@"
 setup_manual_mri_regs "$@"

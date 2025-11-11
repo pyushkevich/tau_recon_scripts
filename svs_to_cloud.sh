@@ -55,9 +55,11 @@ function curl_download_url()
     # SSH to a remote host before getting the web-based resource
     # -n is critical here, otherwise stdin gets messed with and read does not work
     ssh -n -q -o BatchMode=yes -o StrictHostKeyChecking=no $CURL_SSH_HOST \
-      curl -L -s -f --retry 4 -o "$FILE" "$CURL_OPTS" "$URL"
+      curl -L -s -f --retry 4 -o "$FILE" $CURL_OPTS "$URL"
   else
-    curl -L -s -f --retry 4 -o "$FILE" "$CURL_OPTS" "$URL"
+    curl -S -s -L -f --retry 4 -o "$FILE" $CURL_OPTS "$URL"
+    # echo "$URL" > $TMPDIR/url
+    # wget -i $TMPDIR/url -O "$FILE" -t 4
   fi
 }
 
@@ -67,20 +69,11 @@ function download_histo_manifest()
   local id dest url args
   read -r id dest <<< "$@"
 
-  # Match the id in the manifest
-  url=$(cat $MDIR/histo_matching.txt | awk -v id=$id '$1 == id {print $2}')
-  if [[ ! $url ]]; then
-    echo "Missing histology matching data in Google sheets"
-    return 255
-  fi
+  # Read the manifest using API
+  python $ROOT/scripts/read_manifest_gdrive.py -j $ROOT/private/credentials.json $id "$dest"
 
-  # Download the url
-  if ! curl_cat_url "$url" > "$dest"; then
-    echo "Unable to download $url"
-    return 255
-  fi
-
-
+  # Sleep for a couple of seconds to prevent quota issues
+  sleep 2
 }
 
 # Update the local copy of the histology manifest file for a single specimen/block
@@ -106,7 +99,7 @@ function update_histo_match_manifest_specimen()
   download_histo_manifest "$id" "$TMPFILE_FULL"
 
   # Check exclusions
-  awk -F, '$6 !~ "duplicate|exclude" && $4 !~ "multiple" && NR > 1 {print $0}' $TMPFILE_FULL > $TMPFILE_CLEAN
+  awk -F, '$6 !~ "duplicate|exclude|noquant" && $4 !~ "multiple" && NR > 1 {print $0}' $TMPFILE_FULL > $TMPFILE_CLEAN
 
   # Get the list of unique blocks
   all_blocks=$(awk -F, '{print $3}' $TMPFILE_CLEAN | sort -u)
@@ -219,10 +212,11 @@ function check_for_new_slides_specimen()
   local WDIR FREMOTE FLOCAL FCSV FREMOTE_IDS FMISSING_IDS
   WDIR=$(mktemp -d /tmp/slide_check.XXXXXX)
   FREMOTE=$WDIR/remote.txt
-  gsutil ls gs://mtl_histology/$id/histo_raw/*.tif > $FREMOTE
+  gsutil ls gs://mtl_histology/$id/histo_raw/*.tif > $FREMOTE || touch $FREMOTE
 
   # Get a listing of remote ids
   FREMOTE_IDS=$WDIR/remote_ids.txt
+  touch $FREMOTE_IDS
   while IFS= read -r fn; do
     fn_base=$(basename $fn)
     img="${fn_base%.*}"
@@ -231,7 +225,7 @@ function check_for_new_slides_specimen()
 
   # Create a listing of ids present in the manifest
   FCSV=$WDIR/slide_listing.csv
-  download_histo_manifest "$id" "$FCSV"
+  download_histo_manifest "$id" "$FCSV" | touch $FCSV
 
   # Extract slide ids
   FLOCAL=$WDIR/local.txt
@@ -260,7 +254,7 @@ function check_for_new_slides_specimen()
       IFS='-' read -r MS_FIRST MS_LAST <<< "$SECTION"
 
       # Read the first suffix and decypher it into an index
-      MS_IDX=$(($(echo $SUF1 | sed -e "s/^R//")))
+      MS_IDX=$(($(echo $SUF1 | sed -e "s/^R0*//")))
 
       # Get the actual section
       SECTION=$((MS_FIRST+MS_IDX-1))
@@ -288,12 +282,33 @@ function check_for_new_slides_all()
   # Specimen regexp
   REGEXP=$1
 
+  # Create a new directory for the results of this script
+  RESULT_DIR=$ROOT/tmp/manifest/new_slides_for_histology_matching
+  mkdir -p $RESULT_DIR
+  rm -f $RESULT_DIR/*.csv
+
+  # Get the listing of all specimens - not just the ones in histo_matching.txt because 
+  # there may be new specimens that need to be added to the manifest
+  FLISTING=$(mktemp /tmp/specimen-list.XXXXXX)
+  gsutil ls gs://mtl_histology | awk -F '/' '{print $4}' | egrep '^INDD.*|^HN^C*' | sort -u > $FLISTING
+
+  # List all the entries in FLISTING that are not in histo_matching.txt using comm
+  mkdir -p $ROOT/tmp/manifest
+  FNEW=$RESULT_DIR/new_specimens.csv
+  comm -13 <(sort $MDIR/histo_matching.txt | awk '{print $1}') $FLISTING > $FNEW
+
   # Process the individual blocks
   while read -r id url; do
     if [[ $id =~ $REGEXP ]]; then
-      check_for_new_slides_specimen ${id}
+      TMPFILE=$(mktemp /tmp/check_new_slides_${id}.XXXXXX)
+      check_for_new_slides_specimen ${id} | tee $TMPFILE
+      if [ -s $TMPFILE ]; then 
+        mv $TMPFILE "$RESULT_DIR/${id}.csv"
+      else
+        rm -f $TMPFILE
+      fi
     fi
-  done < "$MDIR/histo_matching.txt"
+  done < "$FLISTING"
 }
 
 
@@ -312,8 +327,7 @@ function upload_to_bucket_slide()
   read -r id svs args <<< "$@"
 
   # Read the appropriate line in the source file
-  read -r dummy host vol ext <<< \
-    $(cat $MDIR/svs_source.txt | awk -v id=$id '$1==id {print $0}')
+  read -r dummy host vol ext <<< $(cat $MDIR/svs_source.txt | awk -v id=$id '$1==id {print $0}')
 
   # Form a URL for the source
   src_url=$(get_slide_list_single $id $host $vol $ext $svs)
@@ -376,6 +390,76 @@ function get_specimen_cloud_raw_slides()
 # Apply preprocessing to all the slides that don't have it, unless FORCE=1 
 # in which case, we apply to everything brute force
 function preprocess_specimen_slides()
+{
+  local id dryrun force args SVSLIST FREMOTE BASE JOB YAML
+  read -r id dryrun force args <<< "$@"
+
+  # Get the list of slides that are eligible
+  update_histo_match_manifest_specimen $id > /dev/null
+  SVSLIST=$(get_specimen_manifest_slides $id)
+
+  # Get a full directory dump for processed files
+  FREMOTE=$(mktemp /tmp/preproc-remote-list.XXXXXX)
+  gsutil ls "gs://mtl_histology/$id/histo_proc/**" > $FREMOTE || touch $FREMOTE
+
+  # Append with the listing of raw files
+  gsutil ls "gs://mtl_histology/$id/histo_raw/*" >> $FREMOTE
+
+  # Check for existence of all remote files
+  for svs in $SVSLIST; do
+
+    # Check that the actual raw file exists
+    if ! grep "gs://mtl_histology/$id/histo_raw/$svs\.\(tif\|svs\|tiff\)" $FREMOTE > /dev/null; then
+      echo "Missing raw slide for $id $svs"
+      continue
+    fi
+
+    BASE="gs://mtl_histology/$id/histo_proc/${svs}/preproc/${svs}_"
+
+    # Check if we have to do this
+    local must_run=0
+    if [[ $force -gt 0 ]]; then
+      must_run=1
+    fi
+    for fn in x16_pyramid.tiff; do
+      fn_full=${BASE}${fn}
+      if ! grep "$fn_full" $FREMOTE > /dev/null; then
+        must_run=1
+      fi
+    done
+
+    if [[ $dryrun -gt 0 ]]; then
+      if [[ $must_run -gt 0 ]]; then
+        echo "Needs preprocessing: $id $svs"
+      fi
+    else
+      if [[ $must_run -gt 0 ]]; then
+
+        # Get a job ID
+        JOB=$(echo $id $svs | md5sum | cut -c 1-6)
+
+        # Create a yaml from the template
+        YAML=/tmp/preproc_${JOB}.yaml
+        cat $ROOT/scripts/yaml/histo_preproc_x16tiff.template.yaml | \
+          sed -e "s/%ID%/${id}/g" -e "s/%JOBID%/$JOB/g" -e "s/%SVS%/${svs}/g" \
+          > $YAML
+
+        echo "Scheduling job $id $svs $YAML"
+        kube apply -f $YAML
+      else
+        echo "Skipping: $id $svs"
+      fi
+    fi
+
+  done
+}
+
+# Apply preprocessing to all the slides that don't have it, unless FORCE=1 
+# in which case, we apply to everything brute force
+#
+# This is old code because now the preprocessing happens when the slide is 
+# scanned, except generating the x16 image
+function preprocess_specimen_slides_old()
 {
   local id dryrun force args SVSLIST FREMOTE BASE JOB YAML
   read -r id dryrun force args <<< "$@"
@@ -537,10 +621,10 @@ function density_map_specimen()
       SLIDE_URL=$(grep "gs://mtl_histology/$id/histo_raw/${svs}\.\(tif\|tiff\|svs\)" "$FREMOTE")
 
       # Get the GS url of the model
-      MODEL_URL=$(jq -r ".${stain}.${model}.network" "$MDIR/density_param.json")
+      MODEL_URL=$(jq -r ".${stain}.models.${model}.network" "$MDIR/density_param.json")
 
       # Get the downsampling factor
-      DOWNSAMPLE=$(jq -r ".${stain}.${model}.downsample" "$MDIR/density_param.json")
+      DOWNSAMPLE=$(jq -r ".${stain}.models.${model}.downsample" "$MDIR/density_param.json")
 
       # Do YAML substitution
       cat $ROOT/scripts/yaml/density_map.template.yaml | \
@@ -758,6 +842,9 @@ function download_svg()
 
   # Read the timestamp
   TS_REMOTE=$(jq .timestamp < $TS_REMOTE_JSON_COPY)
+  if [[ $TS_REMOTE == "null" ]]; then
+    echo "Slide $svs does not have annotations"
+  fi
 
   # The different filenames that will be output by this function
   LOCAL_SVG=$WDIR/${svs}_annot.svg
@@ -773,7 +860,11 @@ function download_svg()
   if [[ -f $LOCAL_SVG ]]; then
     local TS_LOCAL
     if [[ -f $LOCAL_TIMESTAMP_JSON ]]; then
-      TS_LOCAL=$(cat $LOCAL_TIMESTAMP_JSON | jq .timestamp)
+      TS_LOCAL=$(cat $LOCAL_TIMESTAMP_JSON | jq ".timestamp // 0")
+      # For some reason sometimes the local json files are empty - and jq returns null string
+      if [[ $TS_LOCAL == "" ]]; then
+        TS_LOCAL=0
+      fi
     else
       TS_LOCAL=0
     fi
@@ -791,6 +882,8 @@ function download_svg()
     if ! curl_download_url "$SVG_URL" "$LOCAL_SVG" "$SVG_CURL_OPTS"; then
       echo "Unable to download $LOCAL_SVG"
       return
+    else 
+      echo "Downloaded $LOCAL_SVG"
     fi
 
     # Record the timestamp
@@ -805,14 +898,6 @@ function rsync_histo_annot()
   # What specimen and block are we doing this for?
   read -r id args <<< "$@"
 
-  # Sync the histo evaluation files
-  SVSLIST=$(get_specimen_manifest_slides $id)
-  for svs in $SVSLIST; do
-    # Get the registration evaluation annotations
-    SVG_CURL_OPTS="-d strip_width=1000"
-    download_svg $PHAS_REGEVAL_TASK $svs "$ROOT/input/$id/histo_regeval/"
-  done
-
   # Sync the anatomical annotations
   SVSLIST=$(get_specimen_manifest_slides $id NISSL)
 
@@ -824,6 +909,21 @@ function rsync_histo_annot()
   done
 }
 
+function rsync_histo_regeval()
+{
+  # What specimen and block are we doing this for?
+  read -r id args <<< "$@"
+
+  # Sync the histo evaluation files
+  SVSLIST=$(get_specimen_manifest_slides $id)
+  for svs in $SVSLIST; do
+    # Get the registration evaluation annotations
+    SVG_CURL_OPTS="-d strip_width=1000"
+    download_svg $PHAS_REGEVAL_TASK $svs "$ROOT/input/$id/histo_regeval/"
+  done
+}
+
+
 function rsync_histo_annot_all()
 {
   # Read an optional regular expression from command line
@@ -833,6 +933,21 @@ function rsync_histo_annot_all()
   while read -r id blocks; do
     if [[ $id =~ $REGEXP ]]; then
       rsync_histo_annot $id
+    fi
+  done < "$MDIR/blockface_src.txt"
+
+}
+
+
+function rsync_histo_regeval_all()
+{
+  # Read an optional regular expression from command line
+  REGEXP=$1
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      rsync_histo_regeval $id
     fi
   done < "$MDIR/blockface_src.txt"
 
@@ -968,6 +1083,7 @@ function usage()
   echo "  density_map_all [-L] [-D] [-F] <stain> <model> [regex] "
   echo "                                              : Compute density maps with WildCat"
   echo "  rsync_histo_all [regex]                     : Download remote processing results"
+  echo "  rsync_histo_annot_all [regex]               : Download remote annotations"
   echo "Blockface functions:"
   echo "  blockface_preprocess_all [regex]            : Run basic preprocessing on BF images in GCP"
   echo "  blockface_multichannel_all [regex]          : Run feature extraction on BF images in GCP"

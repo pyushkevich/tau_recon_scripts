@@ -1,5 +1,8 @@
 #!/bin/bash
-set -x -e
+set -e
+
+echo "PATH: $PATH"
+echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
 # Read the JSON describing the montage
 JSON=${1?}
@@ -33,10 +36,6 @@ function apply_grid()
   bash ${SCRIPTDIR}/ashs_grid.sh -o $OPACITY -s $SPX,$SPY -c $COLOR $FILE $FILE
 }
 
-# Build the slicing command
-SAXIS=$(jq -r '.slicing.axis' $JSON)
-SNUM=$(jq -r '.slicing.positions | length' $JSON)
-
 # Load images in an array
 REFIMG=
 for ((i=0;i<$NIMAGES;i++)); do
@@ -48,17 +47,34 @@ for ((i=0;i<$NIMAGES;i++)); do
   fi
 done
 
-# Extract a slice from the reference image
-for ((j=0;j<$SNUM;j++)); do
-  # Slice position (in percent)
-  SVAL=$(jq -r ".slicing.positions[$j]" $JSON)
+# Build the slicing command
+SAXIS=$(jq -r '.slicing.axis' $JSON)
+SPOS=$(jq -r '.slicing.positions' $JSON)
+if [[ $SPOS == "all" ]]; then
 
-  # Reference filename for slice
-  REFSLC=$(printf $TMPDIR/refslice_%03d.nii.gz $j)
+  c3d $REFIMG -slice $SAXIS 0:-1 \
+    -foreach -int 0 -resample-iso min -slice z 50% -endfor \
+    -oo $TMPDIR/refslice_%03d.mhd
 
-  # Extract the reference slice and equalize its dimensions
-  c3d $REFIMG -slice $SAXIS $SVAL -int 0 -resample-iso min -slice z 50% -o $REFSLC
-done
+  SNUM=$(ls $TMPDIR/refslice_???.mhd | wc -l)
+
+else
+
+  SNUM=$(jq -r '.slicing.positions | length' $JSON)
+
+  # Extract a slice from the reference image
+  for ((j=0;j<$SNUM;j++)); do
+    # Slice position (in percent)
+    SVAL=$(jq -r ".slicing.positions[$j]" $JSON)
+
+    # Reference filename for slice
+    REFSLC=$(printf $TMPDIR/refslice_%03d.mhd $j)
+
+    # Extract the reference slice and equalize its dimensions
+    c3d $REFIMG -slice $SAXIS $SVAL -int 0 -resample-iso min -slice z 50% -o $REFSLC
+  done
+
+fi
 
 # Process the individual images
 for ((i=0;i<$NIMAGES;i++)); do
@@ -75,7 +91,7 @@ for ((i=0;i<$NIMAGES;i++)); do
   for ((j=0;j<$SNUM;j++)); do
 
     # Slice command
-    REFSLC=$(printf $TMPDIR/refslice_%03d.nii.gz $j)
+    REFSLC=$(printf $TMPDIR/refslice_%03d.mhd $j)
 
     # Slice filename
     SFN=$(printf "$TMPDIR/slice_img_%03d_pos_%03d.png" $i $j)
@@ -97,7 +113,7 @@ for ((i=0;i<$NIMAGES;i++)); do
       ET2=$(jq -r ".inputs[$i].edge_threshold[1] // 1" $JSON)
 
       # Using c2d for this because it works more consistently
-      c2d $SFN -canny $EDGESIGMA $ET1 $ET2 -info -scale 255 -type uchar -o $EDGEIMG
+      c2d $SFN -canny $EDGESIGMA $ET1 $ET2 -scale 255 -type uchar -o $EDGEIMG
       ### convert $SFN -canny 0x1+10%+30% +level-colors black,white -transparent black $EDGEIMG
     fi
 
@@ -143,17 +159,24 @@ for j in ${ARR_POS[*]}; do
   done
 done
 
-# How to sort the images
-if [[ $(jq -r ".layout.transpose" $JSON) == "true" ]]; then
-  SORTKEY=1
-  TILING=${#ARR_POS[*]}x${#ARR_IMG[*]}
-else
-  SORTKEY=2
-  TILING=${#ARR_IMG[*]}x${#ARR_POS[*]}
-fi
-
 # Montage the images
-montage $IMAGEMAGICK_FONT_CMD -tile $TILING -geometry +5+5 -mode Concatenate \
-  $(sort -k $SORTKEY $SLICE_LIST_FILE | awk '{print $3}') $OUTPUT
+if [[ $(jq -r ".slicing.separate_files | true" $JSON) == "true" ]]; then
+  for ((j=0;j<$SNUM;j++)); do
+    montage $IMAGEMAGICK_FONT_CMD -tile ${#ARR_IMG[*]}x1 -geometry +5+5 -mode Concatenate \
+      $(sort -k 1 $SLICE_LIST_FILE | awk -v s=$j '$2==s {print $3}') \
+      $(printf $OUTPUT $j)
+  done
+else
+  # How to sort the images
+  if [[ $(jq -r ".layout.transpose" $JSON) == "true" ]]; then
+    SORTKEY=1
+    TILING=${#ARR_POS[*]}x${#ARR_IMG[*]}
+  else
+    SORTKEY=2
+    TILING=${#ARR_IMG[*]}x${#ARR_POS[*]}
+  fi
 
+  montage $IMAGEMAGICK_FONT_CMD -tile $TILING -geometry +5+5 -mode Concatenate \
+    $(sort -k $SORTKEY $SLICE_LIST_FILE | awk '{print $3}') $OUTPUT
+fi
 

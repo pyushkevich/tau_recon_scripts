@@ -1,23 +1,30 @@
 #!/bin/bash
 ROOT=/project/hippogang_2/pauly/tau_atlas
 
-# This should be used in the future when Sadhana moves to PMACS
-SRC=/project/hippogang_3/sravikumar/atlasPHG2019/
+# Source locations are now in a manifest file
+MANIFEST=$ROOT/manifest/whole_mtl_seg.csv
+
 # SRC=/project/hippogang_2/pauly/tau_atlas/sadhana_phg_chead_copy
 
-# Set this to -nav if you don't want to clobber existing files, -av if you do
-CP_OPTS="-nav"
+# Add/remove the -n flag if you don't want to clobber existing files
+CP_OPTS="-pL"
 
 for fn in $(cat $ROOT/manifest/hiresmri_src.csv | awk -F, '{print $1}'); do
 
-  # Sadhana does not use dash for HNL
-  fnsrc=${fn/-/_}
-  fnsrc=${fnsrc/-/_}
-  fnsrc=${fnsrc/HNL_/HNL}
+  # Find the ML filename
+  ML=$(awk -F, -v id=$fn '$1==id {print $2}' < $MANIFEST)
+  if [[ ! $ML ]]; then
+    echo "Whole MTL segmentation for $fn missing in $MANIFEST"
+    continue
+  fi
 
-  ML=$(find $SRC/preproc -name "${fnsrc}*_axisalign_phgsegshape_multilabel.nii.gz")
-  MAT=$(find $SRC/preproc -name "${fnsrc}*_transform_to_axisalign.mat")
-  SRLM=$(find $SRC/inputs -name "${fnsrc}*_axisalign_srlm_sr.nii.gz")
+  # Get the dir and prefix of the segmentation filename
+  MLDIR=$(dirname $ML)
+  MLPREF=$(echo $(basename $ML) | sed -e "s/_axisalign.*//")
+
+  # Get the remaining filenames
+  MAT=$MLDIR/${MLPREF}_transform_to_axisalign.mat
+  SRLM=$MLDIR/${MLPREF}_axisalign_srlmseg_sr.nii.gz
 
   #echo $ML
   if [[ -f $ML && -f $MAT ]]; then
@@ -38,8 +45,9 @@ for fn in $(cat $ROOT/manifest/hiresmri_src.csv | awk -F, '{print $1}'); do
 
   else
 
-    if [[ ! -f $ML ]]; then echo "Missing: ${fnsrc}*_axisalign_phgsegshape_multilabel.nii.gz"; fi
-    if [[ ! -f $MAT ]]; then echo "Missing: ${fnsrc}*_transform_to_axisalign.mat"; fi
+    if [[ ! -f $ML ]]; then echo "Missing: $ML"; fi
+    if [[ ! -f $SRLM ]]; then echo "Missing: $SRLM"; fi
+    if [[ ! -f $MAT ]]; then echo "Missing: $MAT"; fi
 
   fi
 

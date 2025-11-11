@@ -34,3 +34,8 @@ fi
 ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=$NSLOTS
 export NSLOTS ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS
 
+# Clear the SSH CURL host if we are it
+if [[ $(hostname) == $CURL_SSH_HOST ]]; then
+    unset CURL_SSH_HOST
+fi
+

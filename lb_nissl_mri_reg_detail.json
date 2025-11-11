@@ -1,0 +1,36 @@
+{
+    "inputs": [
+      {
+        "name": "Hires MRI",
+        "display": "grayscale",
+        "reference": true,
+        "edges": true,
+        "edge_color": [ 192, 0, 0 ]
+      },
+      {
+        "name": "Nissl (Warped)",
+        "display": "RGB",
+        "edge_color": [ 192, 0, 0 ]
+      },
+      {
+        "name": "Nissl (Affine)",
+        "display": "RGB",
+        "edge_color": [ 192, 0, 0 ]
+      },
+      {
+        "name": "PHG Segmentation",
+        "display": "grayscale",
+        "edge_color": [ 192, 0, 0 ]
+      }
+    ],
+    "slicing": {
+      "axis" : "z",
+      "positions" : "all",
+      "separate_files": true
+    },
+    "grid": {
+      "opacity": 0.5,
+      "color": "lightgreen",
+      "spacing": "10"
+    }
+  }
