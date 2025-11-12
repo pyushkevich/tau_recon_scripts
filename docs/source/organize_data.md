@@ -1,6 +1,8 @@
 # Data Organization
 This document describes how to prepare data and run all the scripts for generating a 3D reconstruction of histology and derived maps using 7T and 9.4T MRI. Please refer to the paper for overall flow of the approach. 
 
+** This document describes a generic setup; if you are working on PATCH|Lab PMACS, see the [specific instructions](organize_data_pmacs.md).
+
 For the purposes of this document we will use variable `${id}` as the example subject identifier, and `${block}` as the example block identifier.
 
 ## Set up directory structure

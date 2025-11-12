@@ -26,6 +26,7 @@ Common options:
   -L                                          : Use legacy code
 ```
 
+(check_for_new_slides_all)=
 ## Checking for New Scanned Slides (`check_for_new_slides_all`)
 
 This command will generate listings that can be pasted into the Google drive spreadsheet (`HistologyMatching`). This is necessary for the slides to be added to `histo.itksnap.org` and for slides to be processed using scripts in this repository.
@@ -49,6 +50,7 @@ After running command, open HistologyMatching spreadsheet in GDrive
 
 The command will also create file `new_specimens.csv` in `$ROOT/tmp/manifest/new_slides_for_histology_matching`. If you want subsequent commands to be available for these specimens, add them to `$ROOT/manifest/histology_matching.txt`. 
 
+(update_histo_match_manifest_all)=
 ## Updating Histology Manifest Files (`update_histo_match_manifest_all`)
 
 This will update the local manifest files in `$ROOT/input/histo_manifest/` folders. These files are essentially a mirror of the Google Spreadsheet `HistologyMatching`. 
@@ -68,6 +70,7 @@ bash ./svs_to_cloud.sh preprocess_slides_all [-D] [REGEX]
 ```
 This will launch a bunch of cloud-based processing jobs. You can see the status of these jobs using `kubectl get jobs` and `kubectl get pods` commands.
 
+(density_map_all)=
 ## Running WildCat in GCP (`density_map_all`)
 
 To apply a wildcat classifier to all the histology slides in Google Cloud, we run this command. It is recommended to first run this with the `-D` (dry run) flag. 
@@ -122,7 +125,7 @@ You can monitor the job with the commands below:
 kubectl get jobs hist-torch-job-43ac6c
 
 # Get status of the pod created for the job
-get pods -l job-name=hist-torch-job-43ac6c
+kubectl get pods -l job-name=hist-torch-job-43ac6c
 
 # Get logs from the pod (once container has been created)
 kubectl logs -l job-name=hist-torch-job-43ac6c
@@ -132,6 +135,24 @@ Once you are sure that everything looks good, run the command for all slides, wi
 
 ```sh
 ./svs_to_cloud.sh density_map_all PV core HNL-33
+```
+
+(nissl_multichannel_all)=
+## Extracting NISSL DeepCluster feature maps (`nissl_multichannel_all`)
+
+Run this command to extract low-resolution feature maps from Nissl slides using the DeepCluster pipeline. As for [`density_map_all`](ref:density_map_all) command, you may want to use the `-D` flag at first before launching the pipeline for all the slides.
+
+```sh
+./svs_to_cloud.sh nissl_multichannel_all [regex]
+```
+
+(rsync_histo_all)=
+## Importing histology-derived maps (`rsync_histo_all`)
+
+This command is used to update the files on the local filesystem (`input` directory) with the latest copies of histology-derived maps on GCP. Simply run
+
+```sh
+./svs_to_cloud.sh rsync_histo_all [regex]
 ```
 
 

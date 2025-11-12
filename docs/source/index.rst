@@ -11,10 +11,12 @@ Pipeline for 3D Reconstruction of Tau Burden Maps from MRI and Histology
 
     3D Printing Cutting Molds <make_molds.md>
     Data Organization <organize_data.md>
+    Data Organization (PATCH|Lab PMACS cluster) <organize_data_pmacs.md>
     WildCat Training and Whole-Slide Analysis <wildcat_train.md>
     Whole-Slide Histology Processing <wsi_proc.md>
     Managing Histology Tasks with `svs_to_cloud.sh` <svs_to_cloud.md>
     Running 3D Reconstruction <recon.md>
+    Tips and Tricks <tips_and_tricks.md>
 
 Indices and tables
 ==================

@@ -38,6 +38,9 @@ fi
 # Common QSUB options
 QSUBOPT="-cwd -V -j y -o $ROOT/dump ${RECON_QSUB_OPT}"
 
+# Default queue (to override with -Q option)
+QSUBQUEUE=""
+
 # Skip level (set using the -s flag)
 SKIPLEVEL=0
 
@@ -824,32 +827,43 @@ function density_param()
   jq -r "$@" "$MDIR/density_param.json"
 }
 
+# Shorten filename by stripping the $ROOT prefix
+function short_fname()
+{
+  echo "$1" | sed -e "s|$ROOT/||"
+}
+
 # Check a single file
 function check_file()
 {
+  fn=${1}
+  fn_short=$(short_fname "$fn")
+
   local RED='\033[0;31m'
   local GREEN='\033[0;32m'
   local NC='\033[0m' # No Color
   if [[ -f ${1?} ]]; then
-    echo -e "${GREEN}$(echo $1 | sed -e "s|$PWD/|./|")${NC}"
+    echo -e "${GREEN}$(echo $fn_short | sed -e "s|$PWD/|./|")${NC}"
   else
-    echo -e "${RED}Not Found${NC}"
+    echo -e "${RED}Not Found [$fn_short]${NC}"
   fi
 }
 
 # Check a single file (optional)
 function check_file_opt()
 {
+  fn=${1}
+  fn_short=$(short_fname "$fn")
+
   local YELLOW='\033[0;34m'
   local GREEN='\033[0;32m'
   local NC='\033[0m' # No Color
   if [[ -f ${1?} ]]; then
-    echo -e "${GREEN}$(echo $1 | sed -e "s|$PWD/|./|")${NC}"
+    echo -e "${GREEN}$(echo $fn_short | sed -e "s|$PWD/|./|")${NC}"
   else
-    echo -e "${YELLOW}Not Found${NC}"
+    echo -e "${YELLOW}Not Found [$fn_short]${NC}"
   fi
 }
-
 
 # Check a file count
 function check_file_count()
@@ -928,8 +942,11 @@ function check_specimen_inputs()
     set_block_vars $id $block
     echo "Block ${block} Histo Manifest  : $(check_file $HISTO_MATCH_MANIFEST)"
 
+    # Get a list of stains
+    all_stains=$(density_param '.|keys[]')
+
     # Loop over stains
-    for active_stain in NISSL Tau; do
+    for active_stain in ${all_stains}; do
 
       # Get the list of models for this stain
       mapfile -t density_models < <(awk -v s=$active_stain '$1==s {print $2}' < $MDIR/density_scaling_vis.txt)
@@ -1545,7 +1562,9 @@ function recon_blockface_dc
 function pybatch()
 {
   export TAU_ATLAS_ROOT=$ROOT
-  $ROOT/scripts/pybatch.sh -o $ROOT/dump "$@"
+  local QUECMD=""
+  if [[ $QSUBQUEUE ]]; then QUECMD="-q $QSUBQUEUE"; fi
+  $ROOT/scripts/pybatch.sh -o $ROOT/dump $QUECMD "$@"
 }
 
 # Run a wrapped function blockwise - a helper
@@ -5316,11 +5335,12 @@ function usage()
 }
 
 # Read the command-line options
-while getopts "dhBs:" opt; do
+while getopts "dhBQ:s:" opt; do
   case $opt in
     d) set -x;;
     h) usage; exit 0;;
     s) SKIPLEVEL=$OPTARG;;
+    Q) QSUBQUEUE=$OPTARG;;
     B) NOBATCH=1;;
     \?) echo "Unknown option $OPTARG"; exit 2;;
     :) echo "Option $OPTARG requires an argument"; exit 2;;

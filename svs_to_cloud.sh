@@ -956,7 +956,8 @@ function rsync_histo_regeval_all()
 
 function blockface_multichannel_block()
 {
-  read -r id block force args <<< "$@"
+  local id block force dryrun args JOB YAML
+  read -r id block force dryrun args <<< "$@"
 
   # Read remote listing of JPEGs
   local SPECIMEN_BF_GCP_ROOT="gs://mtl_histology/${id}"
@@ -1006,7 +1007,11 @@ function blockface_multichannel_block()
 
     # Run the yaml
     echo "Scheduling job $id $block ${s} $((s+BS)) $YAML"
-    kube apply -f $YAML
+    if [[ $dryrun -gt 0 ]]; then
+      echo "Would run: kubectl apply -f $YAML"
+    else
+      kube apply -f $YAML
+    fi
   done
 }
 
@@ -1014,10 +1019,12 @@ function blockface_multichannel_all()
 {
   # Read the command-line options\
   local force=0
+  local dryrun=0
 
-  while getopts "F" opt; do
+  while getopts "FD" opt; do
     case $opt in
       F) force=1;;
+      D) dryrun=1;;
       \?) echo "Unknown option $OPTARG"; exit 2;;
     esac
   done
@@ -1032,7 +1039,7 @@ function blockface_multichannel_all()
   while read -r id blocks; do
     if [[ $id =~ $REGEXP ]]; then
       for b in $blocks; do
-        blockface_multichannel_block $id $b ${force}
+        blockface_multichannel_block $id $b ${force} ${dryrun}
       done
     fi
   done < "$MDIR/blockface_src.txt"

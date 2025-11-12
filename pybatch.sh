@@ -12,6 +12,7 @@ function usage()
   echo "  -N <string>          : Set name of the job"
   echo "  -o <directory>       : Directory for stdout/stderr dump"
   echo "  -w <pattern>         : Wait until jobs in wildcard pattern complete (e.g., 'my_job_*')"
+  echo "  -q <string>          : Default queue to use (if supported by scheduler)"
   echo "Environment variables:"
   echo "  PYBATCH_SLURM_OPTS   : Additional flags to pass to SLURM"
   echo "  PYBATCH_SGE_OPTS     : Additional flags to pass to SGE"
@@ -34,7 +35,7 @@ else
 fi
 
 # Read the command-line options
-while getopts "m:N:w:o:n:dh" opt; do
+while getopts "m:N:w:o:n:q:dh" opt; do
   case $opt in
 
     m) MEMORY=$OPTARG;;
@@ -42,6 +43,7 @@ while getopts "m:N:w:o:n:dh" opt; do
     w) WAITPATTERN=$OPTARG;;
     o) DUMPDIR=$OPTARG;;
     n) CPUCOUNT=$OPTARG;;
+    q) MYQUEUE=$OPTARG;;
     d) set -x -e;;
     h) usage; exit 0;;
     \?) echo "Unknown option $OPTARG"; exit 2;;
@@ -76,6 +78,10 @@ if [[ $MODE == "SLURM" ]]; then
       CPUCMD="-n ${CPUCOUNT}"
     fi
 
+    if [[ $MYQUEUE ]]; then
+      QUECMD="-p $MYQUEUE"
+    fi
+
     mkdir -p ${DUMPDIR?}
     sbatch \
       -D . --export=ALL $MEMCMD $CPUCMD \
@@ -102,8 +108,12 @@ elif [[ $MODE == "LSF" ]]; then
     if [[ $MEMORY ]]; then
       MEMCMD="-M $MEMORY"
     fi
+    if [[ $MYQUEUE ]]; then
+      QUECMD="-q $MYQUEUE"
+    fi
+    echo JOBNAME=${JOBNAME}
     bsub ${PYBATCH_LSF_OPTS} \
-      -cwd "$PWD" -o "${DUMPDIR?}/${JOBNAME?}.o%J" -J "${JOBNAME?}" $MEMCMD "$@"
+      -cwd "$PWD" -o "${DUMPDIR?}/${JOBNAME?}.o%J" -J "${JOBNAME?}" $MEMCMD $QUECMD "$@"
   fi
 
 elif [[ $MODE == "SGE" ]]; then
@@ -114,8 +124,11 @@ elif [[ $MODE == "SGE" ]]; then
     if [[ $MEMORY ]]; then
       MEMCMD="-l h_vmem=$MEMORY -l s_vmem=$MEMORY"
     fi
+    if [[ $MYQUEUE ]]; then
+      QUECMD="-q $MYQUEUE"
+    fi
     qsub ${PYBATCH_SGE_OPTS} \
-      -cwd -V -j y -o ${DUMPDIR?} -N ${JOBNAME?} $MEMCMD "$@"
+      -cwd -V -j y -o ${DUMPDIR?} -N ${JOBNAME?} $MEMCMD $QUECMD "$@"
   fi
 
 fi
