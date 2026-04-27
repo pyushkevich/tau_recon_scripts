@@ -16,7 +16,7 @@
 # compute_regeval_metrics_all [RE]              Compute registration metrics
 #
 # match_ihc_to_nissl_all <stain> [RE]           Match tau, etc to NISSL
-# splat_density_all <stain> <model> <con> [RE]  Generate block density maps
+# splat_density_all <stain_re> <model_re> <con_re> [RE]  Generate block density maps (stain/model/con are regexes; 'all' means '.*')
 #
 # merge_preproc_all [RE]                        Prepare to splat to specimen MRI space
 # build_basic_template                          Build a template from all specimens
@@ -365,6 +365,7 @@ function set_block_vars()
   BFDC_SPLAT_INIT_RGB="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_init_rgb.nii.gz"
   BFDC_SPLAT_INIT_RF_MRILIKE="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_init_rf_mrilike.nii.gz"
   BFDC_SPLAT_INIT_RF_MASK="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_init_rf_mask.nii.gz"
+  BFDC_SPLAT_INIT_WORKSPACE="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_init.itksnap"
 
   # Initial matrix that brings blockface volume into the MRI mold space
   BFDC_SPLAT_TO_MRI_MOLDSPC_INITIAL_RIGID="$BFDC_WORK_DIR/${id}_${block}_bfdc_splat_to_mri_moldspc_init_rigid.mat"
@@ -375,6 +376,18 @@ function set_block_vars()
     "$ROOT/manual/common/bfdc_train/bfdc_rf_first10.dat"
     "$ROOT/manual/common/bfdc_train/bfdc_rf_second10.dat"
     "$ROOT/manual/common/bfdc_train/bfdc_rf_third10.dat" )
+
+  # Sample file for training custom classifiers
+  BFDC_CUSTOM_RF_SAMPLES="$ROOT/manual/${id}/bfdc_rftrain/${block}_samples.nii.gz"
+
+  # Custom classifiers for this sample - in case we need them
+  BFDC_CUSTOM_RF_CLASSIFIERS=(
+    "$ROOT/manual/${id}/bfdc_rftrain/${id}_${block}_bfdc_rf_first10.dat"
+    "$ROOT/manual/${id}/bfdc_rftrain/${id}_${block}_bfdc_rf_second10.dat"
+    "$ROOT/manual/${id}/bfdc_rftrain/${id}_${block}_bfdc_rf_third10.dat")
+
+  # Generate an image to test the custom RF classifier
+  BFDC_CUSTOM_RF_CLASSIFIER_TEST="$ROOT/tmp/bfdc_rftrain/${id}_${block}_bfdc_rf_posteriors.nii.gz"
 
   # Global deepcluster files
   GLOBAL_NISSL_DEEPCLUSTER_RF_1=$ROOT/manual/common/deepcluster_1.rf
@@ -473,6 +486,7 @@ function set_block_vars()
   HISTO_REGEVAL_DIR=$ROOT/work/$id/regeval/$block
 
   # Manifest of slides to exclude from splatting due to NISSL registration problems
+  HISTO_NISSL_MANUAL_REG_EXCLUSION_MANIFEST=$ROOT/manual/common/qc_manifest/nissl_reg_exclude_manifest.csv
   HISTO_NISSL_MANUAL_SPLAT_EXCLUSION_MANIFEST=$ROOT/manual/common/qc_manifest/nissl_qc_manifest.csv
 
   # Splatted files
@@ -760,6 +774,9 @@ function set_ihc_slice_vars()
   SLIDE_IHC_TO_NISSL_REGDIR=$IHC_TO_NISSL_DIR/slides/$SLIDE_LONG_NAME
   local SLICE_IHC_TO_NISSL_BASE=$SLIDE_IHC_TO_NISSL_REGDIR/${SLIDE_LONG_NAME}
 
+  # Optional manual specification for the initial rigid parameters
+  SLIDE_IHC_TO_NISSL_GLOBAL_MANUAL_RIGID=$ROOT/manual/${id}/ihc_reg/${svs}_to_nissl_manual_rigid.mat
+
   # Global rigid/deformable transform to NISSL (without chunking)
   SLIDE_IHC_TO_NISSL_GLOBAL_RIGID=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_global_rigid.mat
   SLIDE_IHC_TO_NISSL_GLOBAL_WARP=${SLICE_IHC_TO_NISSL_BASE}_to_nissl_global_warp.nii.gz
@@ -833,6 +850,9 @@ function short_fname()
   echo "$1" | sed -e "s|$ROOT/||"
 }
 
+# Global variable to collect check status
+CHKSTAT=""
+
 # Check a single file
 function check_file()
 {
@@ -844,8 +864,10 @@ function check_file()
   local NC='\033[0m' # No Color
   if [[ -f ${1?} ]]; then
     echo -e "${GREEN}$(echo $fn_short | sed -e "s|$PWD/|./|")${NC}"
+    CHKSTAT+="${GREEN}✔${NC}"
   else
     echo -e "${RED}Not Found [$fn_short]${NC}"
+    CHKSTAT+="${RED}✘${NC}"
   fi
 }
 
@@ -860,8 +882,10 @@ function check_file_opt()
   local NC='\033[0m' # No Color
   if [[ -f ${1?} ]]; then
     echo -e "${GREEN}$(echo $fn_short | sed -e "s|$PWD/|./|")${NC}"
+    CHKSTAT+="${GREEN}✔${NC}"
   else
     echo -e "${YELLOW}Not Found [$fn_short]${NC}"
+    CHKSTAT+="${YELLOW}⚠${NC}"
   fi
 }
 
@@ -876,8 +900,10 @@ function check_file_count()
   local NUMFILES=${#FILES[@]}
   if [[ $NUMFILES -gt 0 ]]; then
     echo -e "${GREEN}${NUMFILES}${NC}"
+    CHKSTAT+="${GREEN}✔${NC}"
   else
     echo -e "${RED}${NUMFILES}${NC}"
+    CHKSTAT+="${RED}✘${NC}"
   fi
 }
 
@@ -888,8 +914,10 @@ function check_fraction()
   local NC='\033[0m' # No Color
   if [[ $1 -eq $2 ]]; then
     echo -e "${GREEN}${1}/${2}${NC}"
+    CHKSTAT+="${GREEN}+${NC}"
   else
     echo -e "${RED}${1}/${2}${NC}"
+    CHKSTAT+="${RED}✘${NC}"
   fi
 }
 
@@ -900,8 +928,10 @@ function check_fraction_opt()
   local NC='\033[0m' # No Color
   if [[ $1 -eq $2 ]]; then
     echo -e "${GREEN}${1}/${2}${NC}"
+    CHKSTAT+="${GREEN}+${NC}"
   else
     echo -e "${YELLOW}${1}/${2}${NC}"
+    CHKSTAT+="${YELLOW}⚠${NC}"
   fi
 }
 
@@ -1035,13 +1065,17 @@ function check_specimen_results()
   set_specimen_vars $id
 
   # Check MRI
+  STATUS=""
+  CHKSTAT=""
   echo "=== Checking MRI registration (process_mri_all) ==="
-  echo "9.4T to 7T MRI manual affine:   $(check_file_opt $HIRES_TO_MOLD_MANUAL_AFFINE)"
-  echo "9.4T to 7T MRI greedy affine:   $(check_file $HIRES_TO_MOLD_AFFINE)"
-  echo "9.4T to 7T MRI warp:            $(check_file $MOLD_TO_HIRES_INV_WARP)"
-  echo "MRI registration workspace:     $(check_file $MOLD_TO_HIRES_WORKSPACE)"
+  echo -n "9.4T to 7T MRI manual affine:   " & check_file_opt $HIRES_TO_MOLD_MANUAL_AFFINE
+  echo -n "9.4T to 7T MRI greedy affine:   " & check_file $HIRES_TO_MOLD_AFFINE
+  echo -n "9.4T to 7T MRI warp:            " & check_file $MOLD_TO_HIRES_INV_WARP
+  echo -n "MRI registration workspace:     " & check_file $MOLD_TO_HIRES_WORKSPACE
+  STATUS+="$CHKSTAT "
 
   # Check blockface files
+  CHKSTAT=""
   echo "=== Checking Blockface recon (recon_blockface_dc_all) ==="
   read -r dummy blocks <<< "$(grep "^${id}" "$MDIR/blockface_src.txt")"
   for block in $blocks; do
@@ -1049,6 +1083,8 @@ function check_specimen_results()
     echo "Block ${block} RGB volume:          $(check_file $BFDC_SPLAT_INIT_RGB)"
     echo "Block ${block} init MRI-like:       $(check_file $BFDC_SPLAT_INIT_RF_MRILIKE)"
   done
+  STATUS+="$(printf "%-10s" "$CHKSTAT" | tr ' ' '-')"
+  echo -e $STATUS
 
   # Check blockface-MRI registrations
   echo "=== Checking Blockface-MRI pre-registration (match_blockface_to_mri_initial_all) ==="
@@ -1432,6 +1468,140 @@ function recon_blockface()
     -omc $BF_RECON_NII
 }
 
+function pybatch()
+{
+  export TAU_ATLAS_ROOT=$ROOT
+  local QUECMD=""
+  if [[ $QSUBQUEUE ]]; then QUECMD="-q $QSUBQUEUE"; fi
+  $ROOT/scripts/pybatch.sh -o $ROOT/dump $QUECMD "$@"
+}
+
+# Run a wrapped function blockwise - a helper
+function run_blockwise()
+{
+  set -x -e
+  # Read the function to run - required parameter
+  FN=${1?}
+  shift
+
+  # Read optional parameters
+  OPTPARAM=${@:1:$#-1}
+
+  # Read the regexp
+  REGEXP=${@: -1}
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      for block in $blocks; do
+        if [[ $NOBATCH ]]; then
+          $FN $OPTPARAM $id $block
+        else
+          # Submit the jobs
+          pybatch -N "${FN}_${id}_${block}" ${PYBATCH_OPTS--m 8G} \
+            "$0" -s $SKIPLEVEL $FN $OPTPARAM $id $block
+        fi
+      done
+    fi
+  done < "$MDIR/blockface_src.txt"
+
+  # Wait for completion
+  if [[ ! $NOBATCH ]]; then
+    pybatch -w "${FN}_*"
+  fi
+}
+
+# Train a custom random forest classifier for blockface reconstruction
+# based on sampled provided by a user
+function train_custom_blockface_dc_classifier_qsub
+{
+  local id block
+  read -r id block <<< "$@"
+
+  # Set block variables
+  set_block_vars $id $block
+
+  # Check that the sample file exists
+  if [[ ! -f "$BFDC_CUSTOM_RF_SAMPLES" ]]; then
+    echo "Custom RF sample file $BFDC_CUSTOM_RF_SAMPLES not found!"
+    exit 1
+  fi
+
+  TRAIN_OPTS="-rf-param-patch 2x2x0 -rf-param-treedepth 100 -rf-param-ntrees 60"
+
+  # Get the range of z values
+  local Z0 Z1
+  Z0=$(cat "$BFDC_RECON_MANIFEST" | awk '{print $2}' | sort -n | head -n 1)
+  Z1=$(cat "$BFDC_RECON_MANIFEST" | awk '{print $2}' | sort -n | tail -n 1)
+
+  # Temporarily splat the deepcluster features for training
+  SPLAT_DF=$TMPDIR/${id}_${block}_splat_deepcluster.nii.gz
+  stack_greedy splat \
+    -i recon -S exact -z $Z0 0.5 $Z1 \
+    -M "$BFDC_RECON_SPLAT_FEATURES_MANIFEST" \
+    -o "$SPLAT_DF" "$BFDC_RECON_DIR"
+
+  c3d $TRAIN_OPTS -mcs "$BFDC_SPLAT_INIT_RGB" "$SPLAT_DF" \
+    -pick 0 1 2 3 4 5 6 7 8 9 \
+    $BFDC_CUSTOM_RF_SAMPLES -rf-train "${BFDC_CUSTOM_RF_CLASSIFIERS[0]}" \
+    -pop -rf-apply "${BFDC_CUSTOM_RF_CLASSIFIERS[0]}" -omc "$TMPDIR/rfprob_0.nii.gz"
+
+  c3d $TRAIN_OPTS -mcs "$BFDC_SPLAT_INIT_RGB" "$SPLAT_DF" \
+    -pick 0 1 2 10 11 12 13 14 15 16 \
+    $BFDC_CUSTOM_RF_SAMPLES -rf-train "${BFDC_CUSTOM_RF_CLASSIFIERS[1]}" \
+    -pop -rf-apply "${BFDC_CUSTOM_RF_CLASSIFIERS[1]}" -omc "$TMPDIR/rfprob_1.nii.gz"
+
+  c3d $TRAIN_OPTS -mcs "$BFDC_SPLAT_INIT_RGB" "$SPLAT_DF" \
+    -pick 0 1 2 17 18 19 20 21 22 \
+    $BFDC_CUSTOM_RF_SAMPLES -rf-train "${BFDC_CUSTOM_RF_CLASSIFIERS[2]}" \
+    -pop -rf-apply "${BFDC_CUSTOM_RF_CLASSIFIERS[2]}" -omc "$TMPDIR/rfprob_2.nii.gz"
+
+  # Combine the probability maps and generate mri-like images, as well as mask
+  mkdir -p "$(dirname "$BFDC_CUSTOM_RF_CLASSIFIER_TEST")"
+  c3d -mcs \
+    "$TMPDIR/rfprob_0.nii.gz" \
+    "$TMPDIR/rfprob_1.nii.gz" \
+    "$TMPDIR/rfprob_2.nii.gz" \
+    -foreach -dup -times -endfor \
+    -foreach-comp 3 -add -add -sqrt -endfor \
+    -omc "$BFDC_CUSTOM_RF_CLASSIFIER_TEST"
+
+}
+
+function train_custom_blockface_dc_classifier
+{
+  local id block
+  read -r id block <<< "$@"
+  pybatch -N "train_custom_blockface_dc_classifier_${id}_${block}" ${PYBATCH_OPTS--m 8G} \
+    "$0" train_custom_blockface_dc_classifier_qsub  $id $block
+  pybatch -w "train_custom_blockface_dc_classifier_*"
+}
+
+function link_custom_blockface_dc_classifier
+{
+  local id src_block dst_block
+  read -r id src_block dst_block <<< "$@"
+
+  # Set block variables for the source block
+  set_block_vars $id $src_block
+  CLS_SRC=("${BFDC_CUSTOM_RF_CLASSIFIERS[0]}" "${BFDC_CUSTOM_RF_CLASSIFIERS[1]}" "${BFDC_CUSTOM_RF_CLASSIFIERS[2]}")
+  for i in 0 1 2; do
+    if [[ ! -f "${CLS_SRC[i]}" || -L "${CLS_SRC[i]}" ]]; then
+      echo "Custom RF classifiers not found in source block $src_block!"
+      exit 1
+    fi
+  done
+
+  # Set block variables for the destination block
+  set_block_vars $id $dst_block
+  CLS_DST=("${BFDC_CUSTOM_RF_CLASSIFIERS[0]}" "${BFDC_CUSTOM_RF_CLASSIFIERS[1]}" "${BFDC_CUSTOM_RF_CLASSIFIERS[2]}")
+  pushd "$(dirname "${CLS_DST[0]}")"
+  ln -sf $(basename "${CLS_SRC[0]}") "${CLS_DST[0]}"
+  ln -sf $(basename "${CLS_SRC[1]}") "${CLS_DST[1]}"
+  ln -sf $(basename "${CLS_SRC[2]}") "${CLS_DST[2]}"
+  popd
+}
+
 # Blockface reconstruction based on DeepCluster feature maps
 function recon_blockface_dc
 {
@@ -1470,18 +1640,26 @@ function recon_blockface_dc
     c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" $HEADER_CMD \
       -omc "$BFDC_SLIDE_RGB"
 
+    # Check if each file in the array BFDC_CUSTOM_RF_CLASSIFIERS exists:
+    if [[ -f "${BFDC_CUSTOM_RF_CLASSIFIERS[0]}" && -f "${BFDC_CUSTOM_RF_CLASSIFIERS[1]}" && -f "${BFDC_CUSTOM_RF_CLASSIFIERS[2]}" ]]; then
+      echo "Using custom RF classifiers for blockface reconstruction."
+      RFCLS=("${BFDC_CUSTOM_RF_CLASSIFIERS[0]}" "${BFDC_CUSTOM_RF_CLASSIFIERS[1]}" "${BFDC_CUSTOM_RF_CLASSIFIERS[2]}")
+    else
+      RFCLS=("${BFDC_RF_CLASSIFIERS[0]}" "${BFDC_RF_CLASSIFIERS[1]}" "${BFDC_RF_CLASSIFIERS[2]}")
+    fi
+
     # Run the random forest code
     c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" "$BFDC_SLIDE_DEEPCLUSTER" \
       -pick 0 1 2 3 4 5 6 7 8 9 $HEADER_CMD \
-      -rf-apply "${BFDC_RF_CLASSIFIERS[0]}" -omc "$TMPDIR/${slidename}_rfprob_0.nii.gz"
+      -rf-apply "${RFCLS[0]}" -omc "$TMPDIR/${slidename}_rfprob_0.nii.gz"
 
     c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" "$BFDC_SLIDE_DEEPCLUSTER" \
       -pick 0 1 2 10 11 12 13 14 15 16 $HEADER_CMD \
-      -rf-apply "${BFDC_RF_CLASSIFIERS[1]}" -omc "$TMPDIR/${slidename}_rfprob_1.nii.gz"
+      -rf-apply "${RFCLS[1]}" -omc "$TMPDIR/${slidename}_rfprob_1.nii.gz"
 
     c3d -mcs "$BFDC_SLIDE_DEEPCLUSTER_RGB" "$BFDC_SLIDE_DEEPCLUSTER" \
       -pick 0 1 2 17 18 19 20 21 22 $HEADER_CMD \
-      -rf-apply "${BFDC_RF_CLASSIFIERS[2]}" -omc "$TMPDIR/${slidename}_rfprob_2.nii.gz"
+      -rf-apply "${RFCLS[2]}" -omc "$TMPDIR/${slidename}_rfprob_2.nii.gz"
 
     # Combine the probability maps and generate mri-like images, as well as mask
     c2d -mcs \
@@ -1557,49 +1735,13 @@ function recon_blockface_dc
     -i recon -S exact -z $Z0 0.5 $Z1 \
     -M "$BFDC_RECON_SPLAT_RF_MASK_MANIFEST" \
     -o "$BFDC_SPLAT_INIT_RF_MASK" "$BFDC_RECON_DIR"
-}
 
-function pybatch()
-{
-  export TAU_ATLAS_ROOT=$ROOT
-  local QUECMD=""
-  if [[ $QSUBQUEUE ]]; then QUECMD="-q $QSUBQUEUE"; fi
-  $ROOT/scripts/pybatch.sh -o $ROOT/dump $QUECMD "$@"
-}
-
-# Run a wrapped function blockwise - a helper
-function run_blockwise()
-{
-  set -x -e
-  # Read the function to run - required parameter
-  FN=${1?}
-  shift
-
-  # Read optional parameters
-  OPTPARAM=${@:1:$#-1}
-
-  # Read the regexp
-  REGEXP=${@: -1}
-
-  # Process the individual blocks
-  while read -r id blocks; do
-    if [[ $id =~ $REGEXP ]]; then
-      for block in $blocks; do
-        if [[ $NOBATCH ]]; then
-          $FN $OPTPARAM $id $block
-        else
-          # Submit the jobs
-          pybatch -N "${FN}_${id}_${block}" ${PYBATCH_OPTS--m 8G} \
-            "$0" -s $SKIPLEVEL $FN $OPTPARAM $id $block
-        fi
-      done
-    fi
-  done < "$MDIR/blockface_src.txt"
-
-  # Wait for completion
-  if [[ ! $NOBATCH ]]; then
-    pybatch -w "${FN}_*"
-  fi
+  # Generate an ITK-SNAP workspace for inspection
+  itksnap-wt \
+    -lsm "$BFDC_SPLAT_INIT_RGB" -psn "Blockface RGB" -props-set-mcd rgb \
+    -las "$BFDC_SPLAT_INIT_RF_MASK" \
+    -laa "$BFDC_SPLAT_INIT_RF_MRILIKE" -psn "Blockface MRI-like" \
+    -o "$BFDC_SPLAT_INIT_WORKSPACE"
 }
 
 
@@ -2307,6 +2449,7 @@ DISABLE_DECONV
 
 function preproc_histology_all()
 {
+  PYBATCH_OPTS="-q bsc_short"
   run_blockwise preproc_histology "$1"
 }
 
@@ -2755,6 +2898,17 @@ function recon_histology()
       echo "WARNING: no matching blockface image for $svs"
       continue
     fi
+
+    # Check if the slice should be excluded because it may break registration. Some slices do this
+    # because they generate NaNs during registration
+    local blockno=$(echo $block | sed -e "s/H[RL]\([0-9]\)[ap]/\1/")
+    local qcmatch=$(awk -F, -v id=$id -v b=$blockno -v s=$section \
+      '$1==id && $2==b && $3==s {print $1,$2,$3}' < $HISTO_NISSL_MANUAL_REG_EXCLUSION_MANIFEST | wc -l)
+    if [[ $qcmatch -gt 0 ]]; then
+      echo "WARNING: excluding $svs from registration based on QC manifest"
+      continue
+    fi
+    
 
     # The main manifest lists the RGB NISSL slide
     echo $svs $ZPOS 1 \
@@ -3699,7 +3853,7 @@ function match_ihc_to_nissl_slice_internal()
   # Find the matching NISSL slide
   find_nissl_slide $section
 
-  if [[ ! $MATCHED_NISSL_SVS ]]; then continue; fi
+  if [[ ! $MATCHED_NISSL_SVS ]]; then return; fi
 
   # Set the NISSL slide variables
   set_ihc_slice_vars $id $block $MATCHED_NISSL_SVS NISSL $section $MATCHED_NISSL_SLIDE
@@ -3750,48 +3904,63 @@ function match_ihc_to_nissl_slice_internal()
   local PT_CHUNK_INVWARP="$WDIR/chunk_warp_inv_%02d.nii.gz"
   local PT_FIT_SOURCE="$WDIR/fit_source.nii.gz"
 
-  # This is a little bit of a hack, but we are going to try multiple ways to
-  # perform the initial rigid registration and pick the one that gives us the
-  # best result. Because the default is failing in quite a few cases, breaking
-  # everything downstream.
-  c2d -mcs $NISSL_SLIDE_RGB -foreach -stretch 0 255 255 0 -endfor -min \
-    -canny 0.1mm 1.5 2.5 -smooth-fast 0.2mm -info -o $TMPDIR/nissl_canny.nii.gz
+  # If the initial manually-supplied rigid parameters are present, use them and be done
+  if [[ -f $SLIDE_IHC_TO_NISSL_GLOBAL_MANUAL_RIGID ]]; then
+    echo "Using ITK-SNAP manual rigid parameters for $svs"
+    # If the file is a 4x4 matrix, convert it to a 3x3 matrix, dropping third row and column
+    if [[ $(awk 'NF==4' $SLIDE_IHC_TO_NISSL_GLOBAL_MANUAL_RIGID | wc -l) -eq 4 ]]; then
+      awk 'NR!=3 {print $1,$2,$4}' \
+           $SLIDE_IHC_TO_NISSL_GLOBAL_MANUAL_RIGID \
+           > $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
+    else
+      cp $SLIDE_IHC_TO_NISSL_GLOBAL_MANUAL_RIGID $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
+    fi
+  else
 
-  c2d -mcs $SLIDE_RGB -foreach -stretch 0 255 255 0 -endfor -min \
-    -canny 0.1mm 1.5 2.5 -smooth-fast 0.2mm -info -o $TMPDIR/ihc_canny.nii.gz
+    # This is a little bit ofa hack, but we are going to try multiple ways to
+    # perform the initial rigid registration and pick the one that gives us the
+    # best result. Because the default is failing in quite a few cases, breaking
+    # everything downstream.
+    c2d -mcs $NISSL_SLIDE_RGB -foreach -stretch 0 255 255 0 -endfor -min \
+      -canny 0.1mm 1.5 2.5 -smooth-fast 0.2mm -info -o $TMPDIR/nissl_canny.nii.gz
 
-  # Perform the default registration
-  greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
-    -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
-    -n 200x200x40x0x0 -search 20000 $FLIP 10 -o $TMPDIR/rigid1.mat
+    c2d -mcs $SLIDE_RGB -foreach -stretch 0 255 255 0 -endfor -min \
+      -canny 0.1mm 1.5 2.5 -smooth-fast 0.2mm -info -o $TMPDIR/ihc_canny.nii.gz
 
-  # Perform the default registration without search
-  greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
-    -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
-    -n 200x200x40x0x0 -o $TMPDIR/rigid2.mat
+    # Perform the default registration
+    greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
+      -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
+      -n 200x200x40x0x0 -search 20000 $FLIP 10 -o $TMPDIR/rigid1.mat
 
-  # Perform the canny edge image registration 
-  greedy -d 2 -a -dof 6 -i $TMPDIR/nissl_canny.nii.gz $TMPDIR/ihc_canny.nii.gz -gm $NISSL_SLIDE_MASK \
-    -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
-    -n 200x200x40x0x0 -search 20000 $FLIP 10 -o $TMPDIR/rigid3.mat
+    # Perform the default registration without search
+    greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
+      -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
+      -n 200x200x40x0x0 -o $TMPDIR/rigid2.mat
 
-  # Perform the canny edge image registration without search
-  greedy -d 2 -a -dof 6 -i $TMPDIR/nissl_canny.nii.gz $TMPDIR/ihc_canny.nii.gz -gm $NISSL_SLIDE_MASK \
-    -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
-    -n 200x200x40x0x0 -o $TMPDIR/rigid4.mat
+    # Perform the canny edge image registration 
+    greedy -d 2 -a -dof 6 -i $TMPDIR/nissl_canny.nii.gz $TMPDIR/ihc_canny.nii.gz -gm $NISSL_SLIDE_MASK \
+      -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
+      -n 200x200x40x0x0 -search 20000 $FLIP 10 -o $TMPDIR/rigid3.mat
 
-  # For each registration, compute the metric
-  rm -rf $TMPDIR/rigid_metric.txt 
-  for i in 1 2 3 4; do
-    local SCORE=$(greedy -d 2 -metric -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
-      -m WNCC 4x4 -bg NaN -wncc-mask-dilate -it $TMPDIR/rigid${i}.mat \
-      | tail -n 1 | awk '{print $NF}')
-    echo $SCORE $i >> $TMPDIR/rigid_metric.txt
-  done
+    # Perform the canny edge image registration without search
+    greedy -d 2 -a -dof 6 -i $TMPDIR/nissl_canny.nii.gz $TMPDIR/ihc_canny.nii.gz -gm $NISSL_SLIDE_MASK \
+      -ia-image-centers -m WNCC 4x4 -bg NaN -wncc-mask-dilate \
+      -n 200x200x40x0x0 -o $TMPDIR/rigid4.mat
 
-  # Pick the best score
-  local TOP=$(sort -n < $TMPDIR/rigid_metric.txt | sort -n | tail -n 1 | awk '{print $2}')
-  cp $TMPDIR/rigid${TOP}.mat $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
+    # For each registration, compute the metric
+    rm -rf $TMPDIR/rigid_metric.txt 
+    for i in 1 2 3 4; do
+      local SCORE=$(greedy -d 2 -metric -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
+        -m WNCC 4x4 -bg NaN -wncc-mask-dilate -it $TMPDIR/rigid${i}.mat \
+        | tail -n 1 | awk '{print $NF}')
+      echo $SCORE $i >> $TMPDIR/rigid_metric.txt
+    done
+
+    # Pick the best score
+    local TOP=$(sort -n < $TMPDIR/rigid_metric.txt | sort -n | tail -n 1 | awk '{print $2}')
+    cp $TMPDIR/rigid${TOP}.mat $SLIDE_IHC_TO_NISSL_GLOBAL_RIGID
+  
+  fi
 
   # Perform the whole-slide registration (rigid and deformable)
   # greedy -d 2 -a -dof 6 -i $NISSL_SLIDE_RGB $SLIDE_RGB -gm $NISSL_SLIDE_MASK \
@@ -3810,7 +3979,7 @@ function match_ihc_to_nissl_slice_internal()
 
     # Apply fitting to the IHC image
     local INT X0 X1 X2
-    read -r INT X0 X1 X2 <<<$(awk -F, 'NR>1 {print $2}' $WDIR/param_$i.csv)
+    read -r INT X0 X1 X2 <<<$(echo $(awk -F, 'NR>1 {print $2}' $WDIR/param_$i.csv))
     c2d -mcs $SLIDE_RGB -wsum $X0 $X1 $X2 -shift $INT -clip 0 255 -o $WDIR/fit_$i.nii.gz
   done
 
@@ -3846,7 +4015,7 @@ function match_ihc_to_nissl_slice_internal()
 
       # Apply fitting to the IHC image
       local INT X0 X1 X2
-      read -r INT X0 X1 X2 <<<$(awk -F, 'NR>1 {print $2}' $WDIR/param_$i.csv)
+      read -r INT X0 X1 X2 <<<$(echo $(awk -F, 'NR>1 {print $2}' $WDIR/param_$i.csv))
       c2d -mcs $SLIDE_RGB -wsum $X0 $X1 $X2 -shift $INT -clip 0 255 -o $WDIR/fit_$i.nii.gz
     done
 
@@ -4165,8 +4334,8 @@ function match_ihc_to_nissl_all()
   stain=${1?}
   REGEXP=$2
 
-  # Apply pre-processing to the histology
-  run_blockwise preproc_histology "${REGEXP}"
+  # Run in the short queue
+  PYBATCH_OPTS="-q bsc_short"
 
   # Process the individual blocks
   while read -r id blocks; do
@@ -4183,7 +4352,8 @@ function match_ihc_to_nissl_all()
           if [[ $slide_stain != $stain ]]; then continue; fi
 
           # Call the internal function
-          pybatch -N "ihc_nissl_slice_${stain}_${id}_${block}_${svs}" "$0" \
+          PYBATCH_OPTS="-q bsc_short"
+          pybatch -N "ihc_nissl_slice_${stain}_${id}_${block}_${svs}" ${PYBATCH_OPTS} "$0" \
             -s $SKIPLEVEL match_ihc_to_nissl_slice $id $block $stain $section
 
         done < $HISTO_MATCH_MANIFEST
@@ -4205,6 +4375,11 @@ function match_ihc_to_nissl_finalize_all()
   # Read required and optional parameters
   stain=${1?}
   REGEXP=$2
+
+  # Run in the short queue
+  PYBATCH_OPTS="-q bsc_short"
+
+  # Run the splatting scripts
   run_blockwise match_ihc_to_nissl_finalize $stain "${REGEXP}"
 }
 
@@ -4329,21 +4504,39 @@ function splat_density()
 function splat_density_all()
 {
   # Read required and optional parameters
-  read -r stain model contrast REGEXP args <<< "$@"
+  read -r stain_re model_re contrast_re REGEXP args <<< "$@"
 
-  # Process the individual blocks
-  while read -r id blocks; do
-    if [[ $id =~ $REGEXP ]]; then
-      for block in $blocks; do
-        # Submit the jobs
-        pybatch -N "splat_${stain?}_${model?}_${contrast?}_${id}_${block}" -m 8G \
-          $0 -d splat_density $id $block $stain $model $contrast
+  # Translate 'all' to '.*' for any of the regex parameters
+  [[ "$stain_re" == "all" ]] && stain_re=".*"
+  [[ "$model_re" == "all" ]] && model_re=".*"
+  [[ "$contrast_re" == "all" ]] && contrast_re=".*"
+
+  # Iterate over all stain/model/contrast combinations from density_param.json
+  # and match each against the provided regexes
+  for stain in $(density_param "keys[]"); do
+    [[ "$stain" =~ $stain_re ]] || continue
+    for model in $(density_param ".${stain}.models | keys[]"); do
+      [[ "$model" =~ $model_re ]] || continue
+      for contrast in $(density_param ".${stain}.models.${model}.contrasts | keys[]"); do
+        [[ "$contrast" =~ $contrast_re ]] || continue
+
+        # Process the individual blocks
+        while read -r id blocks; do
+          if [[ $id =~ $REGEXP ]]; then
+            for block in $blocks; do
+              # Submit the jobs
+              pybatch -N "splat_density_${stain}_${model}_${contrast}_${id}_${block}" -m 8G \
+                $0 -d splat_density $id $block $stain $model $contrast
+            done
+          fi
+        done < "$MDIR/blockface_src.txt"
+
       done
-    fi
-  done < "$MDIR/blockface_src.txt"
+    done
+  done
 
   # Wait for completion
-  pybatch -w "splat_${stain}_${model}_${contrast}_*"
+  pybatch -w "splat_density_*"
 }
 
 # Preparatory steps for merging the per-block maps into a whole-MTL map
@@ -4363,6 +4556,7 @@ function merge_preproc()
     -resample-mm 0.2x0.2x0.2mm -trim 20vox -o $HIRES_MRI_VIS_REFSPACE
 
   # Send the high-res MRI into the vis space
+  mkdir -p $SPECIMEN_SPLAT_DIR
   greedy -d 3 \
     -rf $HIRES_MRI_VIS_REFSPACE -rm $HIRES_MRI $HIRES_MRI_VIS \
     -r $MOLD_REORIENT_VIS $HIRES_TO_MOLD_AFFINE $MOLD_TO_HIRES_INV_WARP
@@ -4728,6 +4922,7 @@ function merge_preproc_all()
   read -r REGEXP args <<< "$@"
 
   # Process the individual blocks
+  PYBATCH_OPTS="-q bsc_short"
   while read -r id blocks; do
     if [[ $id =~ $REGEXP ]]; then
       pybatch -N "mergepre_${id}" -m 16G \
@@ -5330,7 +5525,7 @@ function usage()
   echo "  preproc_histology_all <regex>                   : Nissl masking"
   echo "  recon_histo_all <regex>                         : Nissl to MRI registration"
   echo "  match_ihc_to_nissl_all <stain> <regex>          : IHC to Nissl registration"
-  echo "  splat_density_all <stain> <model> <con> <regex> : Splat density maps in block-MRI space"
+  echo "  splat_density_all <stain_re> <model_re> <con_re> <regex> : Splat density maps in block-MRI space (stain/model/con are regexes; 'all' means '.*')"
   echo "  merge_whole_specimen_all <vis|raw> <regex>      : Merge blocks in whole-MRI space"
 }
 

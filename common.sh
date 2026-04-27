@@ -21,7 +21,11 @@ mkdir -p $ROOT/dump
 
 # Make sure there is a tmpdir
 if [[ ! $TMPDIR ]]; then
-  TMPDIR=/tmp/recon_${PPID}
+  if [[ -d /scratch ]]; then
+    TMPDIR=/scratch/recon_${PPID}
+  else
+    TMPDIR=/tmp/recon_${PPID}
+  fi
   mkdir -p $TMPDIR
 fi
 

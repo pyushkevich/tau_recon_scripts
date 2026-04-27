@@ -137,6 +137,8 @@ Once you are sure that everything looks good, run the command for all slides, wi
 ./svs_to_cloud.sh density_map_all PV core HNL-33
 ```
 
+The maps will be created on GCP in the `<specimen>/histo_proc/<slide_name>/density` folders.
+
 (nissl_multichannel_all)=
 ## Extracting NISSL DeepCluster feature maps (`nissl_multichannel_all`)
 
