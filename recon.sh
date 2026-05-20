@@ -4938,21 +4938,30 @@ function merge_preproc_all()
 
 function merge_whole_specimen_all()
 {
-  # Read an optional regular expression from command line
-  MODE=${1?}
-  REGEXP=$2
+  # Read required and optional parameters
+  local mode_re REGEXP
+  read -r mode_re REGEXP args <<< "$@"
 
-  # Process the individual blocks
-  while read -r id blocks; do
-    if [[ $id =~ $REGEXP ]]; then
-      # Submit the jobs
-      pybatch -N "merge_whole_specimen_${MODE}_${id}" -m 16G -n 4 \
-        "$0" -d merge_whole_specimen $id $MODE
-    fi
-  done < "$MDIR/blockface_src.txt"
+  # Translate 'all' to '.*' for the mode regex
+  [[ "$mode_re" == "all" ]] && mode_re=".*"
+
+  # Iterate over valid modes and match against the provided regex
+  for MODE in vis raw; do
+    [[ "$MODE" =~ $mode_re ]] || continue
+
+    # Process the individual blocks
+    while read -r id blocks; do
+      if [[ $id =~ $REGEXP ]]; then
+        # Submit the jobs
+        pybatch -N "merge_whole_specimen_${MODE}_${id}" -m 16G -n 4 \
+          "$0" -d merge_whole_specimen $id $MODE
+      fi
+    done < "$MDIR/blockface_src.txt"
+
+  done
 
   # Wait for completion
-  pybatch -w "merge_whole_specimen_${MODE}_*" /bin/sleep 1
+  pybatch -w "merge_whole_specimen_*" /bin/sleep 1
 }
 
 
@@ -5525,8 +5534,8 @@ function usage()
   echo "  preproc_histology_all <regex>                   : Nissl masking"
   echo "  recon_histo_all <regex>                         : Nissl to MRI registration"
   echo "  match_ihc_to_nissl_all <stain> <regex>          : IHC to Nissl registration"
-  echo "  splat_density_all <stain_re> <model_re> <con_re> <regex> : Splat density maps in block-MRI space (stain/model/con are regexes; 'all' means '.*')"
-  echo "  merge_whole_specimen_all <vis|raw> <regex>      : Merge blocks in whole-MRI space"
+  echo "  splat_density_all <stain> <model> <con> <regex> : Splat density maps in block-MRI space (stain/model/con are regexes; 'all' means '.*')"
+  echo "  merge_whole_specimen_all <vis|raw|all> <regex>  : Merge blocks in whole-MRI space (mode is a regex; 'all' means '.*')"
 }
 
 # Read the command-line options
