@@ -799,8 +799,8 @@ function rsync_histo_proc()
   local SPECIMEN_HISTO_GCP_ROOT="gs://mtl_histology/${id}/histo_proc"
   local SPECIMEN_HISTO_LOCAL_ROOT="$ROOT/input/${id}/histo_proc"
 
-  # Create some exclusions
-  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff"
+  # Create some exclusions (including thumbnail that takes up space and is not super useful)
+  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff|thumbnail\.tiff|label\.tiff|macro\.tiff"
   mkdir -p "$SPECIMEN_HISTO_LOCAL_ROOT"
   gsutil -m rsync -R -x "$EXCL" "$SPECIMEN_HISTO_GCP_ROOT/" "$SPECIMEN_HISTO_LOCAL_ROOT/"
 }
@@ -815,6 +815,30 @@ function rsync_histo_all()
     fi
   done < "$MDIR/histo_matching.txt"
 }
+
+function delete_density_maps()
+{
+  read -r stain id args <<< "$@"
+
+  local SPECIMEN_HISTO_LOCAL_ROOT="$ROOT/input/${id}/histo_proc"
+  for fn in $SPECIMEN_HISTO_LOCAL_ROOT/*/density/*densitymap.nii.gz; do
+    if [[ $(basename $fn) =~ _${stain}_[a-zA-Z0-9]+_densitymap.nii.gz ]]; then
+      rm -rfv $fn
+    fi
+  done
+}
+
+function delete_density_maps_all()
+{
+  STAIN=${1?}
+  REGEXP=$2
+  while read -r id args; do
+    if [[ $id =~ $REGEXP ]]; then
+      delete_density_maps "$STAIN" $id
+    fi
+  done < "$MDIR/histo_matching.txt"
+}
+
 
 # Generic function to download an SVG from PHAS with timestamp check
 # usage:
@@ -1091,6 +1115,7 @@ function usage()
   echo "                                              : Compute density maps with WildCat"
   echo "  rsync_histo_all [regex]                     : Download remote processing results"
   echo "  rsync_histo_annot_all [regex]               : Download remote annotations"
+  echo "  delete_density_maps_all <stain> [regex]     : Delete density maps once no longer needed"
   echo "Blockface functions:"
   echo "  blockface_preprocess_all [regex]            : Run basic preprocessing on BF images in GCP"
   echo "  blockface_multichannel_all [regex]          : Run feature extraction on BF images in GCP"

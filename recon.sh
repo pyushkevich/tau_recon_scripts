@@ -520,9 +520,6 @@ function set_block_vars()
   # to copy location
   HISTO_AFFINE_X16_DIR=$ROOT/export/affine_x16/${id}/${block}
 
-  # Where histology-derived density maps are stored
-  HISTO_DENSITY_DIR=$ROOT/work/$id/ihc_maps/$block
-
   # Manifest file for registration validation splatting
   HISTO_NISSL_REGEVAL_SPLAT_MANIFEST=$HISTO_SPLAT_DIR/${id}_${block}_nissl_regeval_splat_manifest.txt
   HISTO_NISSL_REGEVAL_SPLAT_PATTERN=$HISTO_SPLAT_DIR/${id}_${block}_nissl_regeval_splat_%s.nii.gz
@@ -705,8 +702,7 @@ function set_histo_common_slice_vars()
   # The location of the deepcluster 20-feature image
   SLIDE_DEEPCLUSTER=$SLIDE_LOCAL_PREPROC_DIR/${svs}_deepcluster.nii.gz
 
-  # The location of the RGB thumbnail, RGB nifti, and metadata JSON
-  SLIDE_THUMBNAIL=$SLIDE_LOCAL_PREPROC_DIR/${svs}_thumbnail.tiff
+  # The location of the RGB nifti, and metadata JSON
   SLIDE_RGB=$SLIDE_LOCAL_PREPROC_DIR/${svs}_rgb_40um.nii.gz
   SLIDE_METADATA=$SLIDE_LOCAL_PREPROC_DIR/${svs}_metadata.json
 
@@ -819,23 +815,11 @@ function set_ihc_slice_density_vars()
   # For backward compatibility reasons, we don't add the contrast if it's the main
   # contrast for the model
   if [[ $contrast == "main" ]]; then
-    sdmbase=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME?}_${model}
+    HISTO_DENSITY_BASENAME=${SLIDE_LONG_NAME?}_${model}
   else
-    sdmbase=$HISTO_DENSITY_DIR/${SLIDE_LONG_NAME?}_${model}_${contrast}
+    HISTO_DENSITY_BASENAME=${SLIDE_LONG_NAME?}_${model}_${contrast}
   fi
 
-  # Thresholded density map
-  SLIDE_DENSITY_MAP_THRESH=${sdmbase}_densitymap_thresh.nii.gz
-
-  # Density map in NISSL space
-  SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING=${sdmbase}_densitymap_thresh_to_nissl.nii.gz
-
-  # Binary image (all 1) corresponding to the above, used for splatting a mask that indicates the
-  # presense or absence of a contrast
-  SLIDE_DENSITY_MAP_TO_NISSL_MASK=${sdmbase}_densitymap_to_nissl_mask.nii.gz
-
-  # A more refined mask based on manual QC, if available
-  SLIDE_DENSITY_MAP_TO_NISSL_MASK_QCEXCL=${sdmbase}_densitymap_to_nissl_mask_qcexcl.nii.gz
 }
 
 # Get density parameters via jq
@@ -1006,7 +990,7 @@ function check_specimen_inputs()
           set_ihc_slice_vars $id $block $svs $stain $section $slice $args
 
           # Check if the slide has basic preprocessing data
-          if [[ -f $SLIDE_THUMBNAIL && -f $SLIDE_RGB && -f $SLIDE_METADATA ]]; then
+          if [[ -f $SLIDE_RGB && -f $SLIDE_METADATA ]]; then
             N_PROC=$((N_PROC+1))
             if [[ -f $SLIDE_DEEPCLUSTER ]]; then
               N_DEEPCLUSTER=$((N_DEEPCLUSTER+1))
@@ -2390,7 +2374,7 @@ function preproc_histology()
     mkdir -p $SLIDE_WORK_DIR
 
     # Make sure the preprocessing data for this slice exists, if not issue a warning
-    if [[ ! -f $SLIDE_RGB || ! -f $SLIDE_THUMBNAIL ]]; then
+    if [[ ! -f $SLIDE_RGB ]]; then
       echo "WARNING: missing images for $svs"
       continue
     fi
@@ -3027,7 +3011,7 @@ function recon_histology()
 
 
   # Perform splatting at different stages
-  local SPLAT_STAGES="recon volmatch voliter-10 voliter-20"
+  local SPLAT_STAGES="voliter-10 voliter-20"
   for STAGE in $SPLAT_STAGES; do
 
     local OUT="$(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN $STAGE)"
@@ -3219,7 +3203,7 @@ function compute_regeval_metrics_old()
   mesh_image_sample $MRI_CONTOUR_V2 $MRI_CONTOUR_LABEL $HISTO_REGEVAL_MRI_MESH Label
 
   # Go over splat stages
-  local SPLAT_STAGES="volmatch voliter-10 voliter-20"
+  local SPLAT_STAGES="voliter-10 voliter-20"
   for STAGE in $SPLAT_STAGES; do
 
     # Create directory for evaluation
@@ -4405,6 +4389,7 @@ function splat_density()
   rm -f $IHC_DENSITY_SPLAT_MANIFEST
 
   # Create output directory
+  HISTO_DENSITY_DIR=$TMPDIR/ihc_maps/${id}_${block}
   mkdir -p $HISTO_DENSITY_DIR
 
   # Read the weights and other parameters for this contrast
@@ -4420,6 +4405,21 @@ function splat_density()
     # Set the variables
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
     set_ihc_slice_density_vars $svs $stain $model $contrast
+
+    # Images derived from the density map can be placed in scratch space
+
+    # Thresholded density map
+    SLIDE_DENSITY_MAP_THRESH=${HISTO_DENSITY_BASENAME}_densitymap_thresh.nii.gz
+
+    # Density map in NISSL space
+    SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING=${HISTO_DENSITY_BASENAME}_densitymap_thresh_to_nissl.nii.gz
+
+    # Binary image (all 1) corresponding to the above, used for splatting a mask that indicates the
+    # presense or absence of a contrast
+    SLIDE_DENSITY_MAP_TO_NISSL_MASK=${HISTO_DENSITY_BASENAME}_densitymap_to_nissl_mask.nii.gz
+
+    # A more refined mask based on manual QC, if available
+    SLIDE_DENSITY_MAP_TO_NISSL_MASK_QCEXCL=${HISTO_DENSITY_BASENAME}_densitymap_to_nissl_mask_qcexcl.nii.gz    
 
     # Find the matching NISSL slide
     find_nissl_slide $section
@@ -5509,6 +5509,12 @@ function export_annot_workspaces_all()
   run_blockwise export_annot_workspace $DESTDIR $REGEXP
 }
 
+function cleanup_dump()
+{
+  DAYS=${1?}
+  find $ROOT/dump -type f -mtime +${DAYS} -delete
+}
+
 
 function main()
 {
@@ -5536,6 +5542,8 @@ function usage()
   echo "  match_ihc_to_nissl_all <stain> <regex>          : IHC to Nissl registration"
   echo "  splat_density_all <stain> <model> <con> <regex> : Splat density maps in block-MRI space (stain/model/con are regexes; 'all' means '.*')"
   echo "  merge_whole_specimen_all <vis|raw|all> <regex>  : Merge blocks in whole-MRI space (mode is a regex; 'all' means '.*')"
+  echo "Cleanup functions:"
+  echo "  cleanup_dump <days>                             : Delete dump files over <days> old"
 }
 
 # Read the command-line options
