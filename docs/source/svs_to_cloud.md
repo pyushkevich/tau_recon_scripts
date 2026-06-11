@@ -56,7 +56,7 @@ The command will also create file `new_specimens.csv` in `$ROOT/tmp/manifest/new
 This will update the local manifest files in `$ROOT/input/histo_manifest/` folders. These files are essentially a mirror of the Google Spreadsheet `HistologyMatching`. 
 
 ```sh
-./svs_to_cloud.sh check_for_new_slides_all <regex>
+./svs_to_cloud.sh update_histo_match_manifest_all <regex>
 ```
 
 ## Preprocessing Histology Slides (`preprocess_slides_all`)

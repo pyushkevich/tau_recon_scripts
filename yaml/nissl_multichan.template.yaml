@@ -16,7 +16,7 @@ spec:
       - name: my-gpu-container-torch
         image: pyushkevich/tangle-cnn-prod:latest
         command: ["/bin/bash"]
-        args: ["process_nissl.sh", "cfn-cluster-test", "%ID%", "%SVS%"]
+        args: ["scripts/process_nissl.sh", "cfn-cluster-test", "%ID%", "%SVS%"]
         resources:
           limits:
             nvidia.com/gpu: 1

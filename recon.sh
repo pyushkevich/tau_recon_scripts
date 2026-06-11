@@ -1925,7 +1925,7 @@ function process_mri_all()
   while read -r id dir orient args; do
     if [[ $id =~ $REGEXP ]]; then
       # Submit the jobs
-      pybatch -N "mri_reg_${id}" -m 16G \
+      pybatch -N "mri_reg_${id}" -m 24G \
         $0 -d process_mri $id $orient
     fi
   done < "$MDIR/moldmri_src.txt"
@@ -3114,7 +3114,7 @@ function recon_histology()
 
   # Create a blockface reference image that has the same dimensions as the
   # splatted images. This will be used to extract edges
-  c3d $(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN volmatch) \
+  c3d $(printf $HISTO_NISSL_MRILIKE_SPLAT_PATTERN voliter-20) \
     $BFVIS_MRILIKE -int 0 -reslice-identity -o $HISTO_NISSL_SPLAT_BF_MRILIKE \
     -as X -slice z 0:-1 -foreach -canny 0.4x0.4x0.0mm 0.2 0.2 -endfor -tile z \
     -insert X 1 -copy-transform -o $HISTO_NISSL_SPLAT_BF_MRILIKE_EDGES
@@ -4409,17 +4409,17 @@ function splat_density()
     # Images derived from the density map can be placed in scratch space
 
     # Thresholded density map
-    SLIDE_DENSITY_MAP_THRESH=${HISTO_DENSITY_BASENAME}_densitymap_thresh.nii.gz
+    SLIDE_DENSITY_MAP_THRESH=${HISTO_DENSITY_DIR}/${HISTO_DENSITY_BASENAME}_densitymap_thresh.nii.gz
 
     # Density map in NISSL space
-    SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING=${HISTO_DENSITY_BASENAME}_densitymap_thresh_to_nissl.nii.gz
+    SLIDE_DENSITY_MAP_THRESH_TO_NISSL_RESLICE_CHUNKING=${HISTO_DENSITY_DIR}/${HISTO_DENSITY_BASENAME}_densitymap_thresh_to_nissl.nii.gz
 
     # Binary image (all 1) corresponding to the above, used for splatting a mask that indicates the
     # presense or absence of a contrast
-    SLIDE_DENSITY_MAP_TO_NISSL_MASK=${HISTO_DENSITY_BASENAME}_densitymap_to_nissl_mask.nii.gz
+    SLIDE_DENSITY_MAP_TO_NISSL_MASK=${HISTO_DENSITY_DIR}/${HISTO_DENSITY_BASENAME}_densitymap_to_nissl_mask.nii.gz
 
     # A more refined mask based on manual QC, if available
-    SLIDE_DENSITY_MAP_TO_NISSL_MASK_QCEXCL=${HISTO_DENSITY_BASENAME}_densitymap_to_nissl_mask_qcexcl.nii.gz    
+    SLIDE_DENSITY_MAP_TO_NISSL_MASK_QCEXCL=${HISTO_DENSITY_DIR}/${HISTO_DENSITY_BASENAME}_densitymap_to_nissl_mask_qcexcl.nii.gz    
 
     # Find the matching NISSL slide
     find_nissl_slide $section
@@ -4866,8 +4866,18 @@ function merge_whole_specimen()
             # Create a merged workspace
             itksnap-wt \
               -lsm "$RECON_MRI" -psn "9.4T MRI" \
-              -laa "$SPECIMEN_NISSL_SPLAT_VIS" -psn "NISSL recon" -props-set-mcd RGB \
-              -props-set-contrast LINEAR 0 255 \
+              -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
+
+            # Only add the NISSL volume if splat for it exists
+            if [[ -f $SPECIMEN_NISSL_SPLAT_VIS ]]; then
+              itksnap-wt -i $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE \
+                -laa "$SPECIMEN_NISSL_SPLAT_VIS" -psn "NISSL recon" -props-set-mcd RGB \
+                -props-set-contrast LINEAR 0 255 \
+                -o $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE
+            fi
+
+            # Add the rest
+            itksnap-wt -i $SPECIMEN_DENSITY_SPLAT_VIS_WORKSPACE \
               -laa "$SPECIMEN_IHC_SPLAT_VIS" -psn "${stain} recon" -props-set-mcd RGB \
               -props-set-contrast LINEAR 0 255 \
               -laa "$SPECIMEN_DENSITY_SPLAT_VIS" \

@@ -43,3 +43,5 @@ if [[ $(hostname) == $CURL_SSH_HOST ]]; then
     unset CURL_SSH_HOST
 fi
 
+# Everything we write should be group writable
+umask 002

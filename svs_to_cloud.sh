@@ -993,7 +993,7 @@ function blockface_multichannel_block()
 
   # Read the remote listing of existing files
   rm -rf $FREMOTEPROC
-  if ! gsutil ls "$SPECIMEN_BF_GCP_ROOT/bf_proc/${id}_${block}_**/*.nii.gz" > $FREMOTEPROC; then
+  if ! gsutil ls "$SPECIMEN_BF_GCP_ROOT/bf_proc/${id}_${block}_**/*.nii.gz" 2>/dev/null > $FREMOTEPROC; then
     touch $FREMOTEPROC
   fi
 

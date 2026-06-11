@@ -94,8 +94,9 @@ function copy_hires_mri()
   REGEXP=$1
 
   while IFS=$',' read -r ID FWPATH args; do
-
     if [[ $ID =~ $REGEXP ]]; then
+      echo "Trying to copy $ID high-res MRI from '$FWPATH'"
+
       # Create the input directory
       IDIR=$ROOT/input/$ID/hires_mri
       mkdir -p $IDIR
@@ -113,7 +114,7 @@ function copy_hires_mri()
       fi
 
       # Copy needed files
-      fw download -o $FN "$FWPATH"
+      /home/pauly2/local/bin/fw download -o $FN "$FWPATH"
 
       # Compress if needed
       if [[ $FN =~ nii$ ]]; then

@@ -16,7 +16,7 @@ spec:
       - name: my-gpu-container-torch
         image: pyushkevich/tangle-cnn-prod
         command: ["/bin/bash"]
-        args: ["wildcat_analyze_wsi.sh",
+        args: ["scripts/wildcat_analyze_wsi.sh",
                "-s", "%INPUT%",
                "-n", "%NETWORK%",
                "-o", "%OUTPUT%",

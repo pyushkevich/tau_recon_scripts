@@ -14,7 +14,7 @@ spec:
             secretName: gse-key
       containers:
       - name: my-gpu-container-torch
-        image: pyushkevich/tangle-cnn-prod-legacy2020:latest
+        image: pyushkevich/tangle-cnn-prod-legacy2020:fix-20260611
         command: ["/bin/bash"]
         args: ["process_slide_full.sh", "cfn-cluster-test", "%ID%", "%SVS%", "%STAIN%", "%MODEL%"]
         resources:
