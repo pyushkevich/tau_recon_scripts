@@ -44,7 +44,7 @@ First, create a workspace to perform manual registration.
 ./copy_input.sh setup_manual_mri_regs HNL-56-21
 ```
 
-This will create a workspace `$ROOT/input/HNL-56-21/HNL-56-21_hires_to_mold.itksnap` that you can open and perform registration with. Open this workspace in ITK-SNAP (see [helpful hint](ref:workspace-to-local)) and perform registration. Then save the resulting affine matrix file to `manual/HNL-56-21/hires_to_mold/HNL-56-21_mri_hires_to_mold_affine.mat`.
+This will create a workspace `$ROOT/input/HNL-56-21/HNL-56-21_hires_to_mold.itksnap` that you can open and perform registration with. Open this workspace in ITK-SNAP (see {ref}`helpful hint <workspace-to-local>`) and perform registration. Then save the resulting affine matrix file to `manual/HNL-56-21/hires_to_mold/HNL-56-21_mri_hires_to_mold_affine.mat`.
 
 ![](img/figure_7t_97_reg.png)
 
@@ -166,8 +166,8 @@ In the example below, I used volume rendering to help check registration quality
 ![Completed workspace for registration](img/bfreg_inspect.png)
 
 If the registration is not good, the ways to improve it are:
-* Try a [better initialization](ref:custom_bf_classifier_train)
-* Try [training a custom classifier](ref:initial_blockface_workspace) for the blockface images
+* Try a {ref}`better initialization <custom_bf_classifier_train>`
+* Try {ref}`training a custom classifier <initial_blockface_workspace>` for the blockface images
 
 
 ## Histology Mask Generation
