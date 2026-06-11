@@ -180,13 +180,13 @@ This is the most time-consuming step. Histology preparation includes running Wil
 
 The commands use the script [`svs_to_cloud.sh`](svs_to_cloud). The sequence of steps for preparing histology for a new specimen is:
 
-* Update the `HistologyMatching` GDrive spreadsheet with the help of `check_for_new_slides_all` command as described [here](ref:check_for_new_slides_all).
+* Update the `HistologyMatching` GDrive spreadsheet with the help of `check_for_new_slides_all` command as described {ref}`here <check_for_new_slides_all>`.
 
-* Update local manifests using `update_histo_match_manifest_all` command as described [here](ref:update_histo_match_manifest_all).
+* Update local manifests using `update_histo_match_manifest_all` command as described {ref}`here <update_histo_match_manifest_all>`.
 
-* Generate feature maps for NISSL slides using the DeepCluster algorithm by running `nissl_multichannel_all` as described [here](ref:nissl_multichannel_all).
+* Generate feature maps for NISSL slides using the DeepCluster algorithm by running `nissl_multichannel_all` as described {ref}`here <nissl_multichannel_all>`.
 
-* For each histology stain and Wildcat model, run the `density_map_all` command to generate whole-slide density maps, as described [here](ref:density_map_all)
+* For each histology stain and Wildcat model, run the `density_map_all` command to generate whole-slide density maps, as described {ref}`here <density_map_all>`
 
-* Lastly, copy all the images computed by GCP to PMACS using the `rsync_histo_all` command, as described [here](ref:rsync_histo_all).
+* Lastly, copy all the images computed by GCP to PMACS using the `rsync_histo_all` command, as described {ref}`here <rsync_histo_all>`.
 

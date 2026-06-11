@@ -142,7 +142,7 @@ The maps will be created on GCP in the `<specimen>/histo_proc/<slide_name>/densi
 (nissl_multichannel_all)=
 ## Extracting NISSL DeepCluster feature maps (`nissl_multichannel_all`)
 
-Run this command to extract low-resolution feature maps from Nissl slides using the DeepCluster pipeline. As for [`density_map_all`](ref:density_map_all) command, you may want to use the `-D` flag at first before launching the pipeline for all the slides.
+Run this command to extract low-resolution feature maps from Nissl slides using the DeepCluster pipeline. As for {ref}`density_map_all <density_map_all>` command, you may want to use the `-D` flag at first before launching the pipeline for all the slides.
 
 ```sh
 ./svs_to_cloud.sh nissl_multichannel_all [regex]
