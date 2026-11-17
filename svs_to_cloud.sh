@@ -98,10 +98,6 @@ function update_histo_match_manifest_specimen()
   # Download the manifest
   download_histo_manifest "$id" "$TMPFILE_FULL"
 
-  # Keep an unfiltered copy (all columns, incl. Certainty and Tags) for
-  # functions that apply their own filters, e.g., rsync_histo_all
-  cp "$TMPFILE_FULL" "$HISTO_MATCH_MANIFEST_DIR/${id}_full_manifest.csv"
-
   # Check exclusions
   awk -F, '$6 !~ "duplicate|exclude|noquant" && $4 !~ "multiple" && NR > 1 {print $0}' $TMPFILE_FULL > $TMPFILE_CLEAN
 
@@ -117,12 +113,12 @@ function update_histo_match_manifest_specimen()
     awk -F, -v b=$block '$3 == b {print $0}' $TMPFILE_CLEAN > $TMPFILE
 
     # Read all the slices for this block
-    local svs stain dummy section slice args
-    while IFS=, read -r svs stain dummy section slice args; do
+    local svs stain dummy section slice certainty tags args
+    while IFS=, read -r svs stain dummy section slice certainty tags args; do
 
       # Check for incomplete lines
       if [[ ! $section || ! $stain || ! $svs ]]; then
-        echo "WARNING: incomplete line '$svs,$stain,$dummy,$section,$slice,$args' in Google sheet"
+        echo "WARNING: incomplete line '$svs,$stain,$dummy,$section,$slice,$certainty,$tags' in Google sheet"
         continue
       fi
 
@@ -132,7 +128,9 @@ function update_histo_match_manifest_specimen()
         if [[ $stain == "NISSL" ]]; then slice=10; else slice=8; fi
       fi
 
-      echo $svs,$stain,$dummy,$section,$slice >> $HISTO_MATCH_MANIFEST
+      # Columns: svs,stain,block,section,slice,tags (tags are ';'-separated).
+      # Readers in recon.sh use 'IFS=, read ... slice args', so tags land in args
+      echo "$svs,$stain,$dummy,$section,$slice,$tags" >> $HISTO_MATCH_MANIFEST
     done < $TMPFILE
 
     # Report for this block
@@ -792,43 +790,29 @@ function nissl_multichannel_all()
   done < "$MDIR/histo_matching.txt"
 }
 
-# Print the ids of slides in a full specimen manifest (as saved by
-# update_histo_match_manifest_specimen) that pass the filters below.
-# Slides marked duplicate/exclude in the Certainty column are always dropped.
-#   usage: filter_specimen_full_manifest <csv> [stain_re] [incl_re] [excl_re]
-#   stain_re : Stain column must fully match this regex (case-sensitive)
-#   incl_re  : Tags column must contain a match to this regex (case-insensitive)
-#   excl_re  : Tags column must not contain a match to this regex (case-insensitive)
-function filter_specimen_full_manifest()
+# Print the ids of slides in a specimen's per-block histo manifests (which
+# already omit duplicate/exclude/noquant slides) that pass optional filters:
+#   usage: filter_specimen_manifest_slides <id> [stain_re] [incl_re] [excl_re]
+#   stain_re : stain (column 2) must fully match this regex
+#   incl_re  : tags (column 6) must contain a match (case-insensitive)
+#   excl_re  : tags (column 6) must not contain a match (case-insensitive)
+# Regexes are awk EREs; they are passed through the environment because
+# 'awk -v' would mangle backslashes.
+function filter_specimen_manifest_slides()
 {
-  local csv=${1?} stain_re=$2 incl_re=$3 excl_re=$4
-  python3 - "$csv" "$stain_re" "$incl_re" "$excl_re" <<'EOF'
-import csv, re, sys
-fn, stain_re, incl_re, excl_re = sys.argv[1:5]
-cert_excl = re.compile('duplicate|exclude', re.I)
-stain_re = re.compile(stain_re) if stain_re else None
-incl_re = re.compile(incl_re, re.I) if incl_re else None
-excl_re = re.compile(excl_re, re.I) if excl_re else None
-seen = set()
-with open(fn, newline='') as f:
-    for row in csv.DictReader(f):
-        svs = (row.get('Slide') or '').strip()
-        stain = (row.get('Stain') or '').strip()
-        cert = row.get('Certainty') or ''
-        tags = row.get('Tags') or ''
-        if not svs or svs in seen:
-            continue
-        if cert_excl.search(cert):
-            continue
-        if stain_re and not stain_re.fullmatch(stain):
-            continue
-        if incl_re and not incl_re.search(tags):
-            continue
-        if excl_re and excl_re.search(tags):
-            continue
-        seen.add(svs)
-        print(svs)
-EOF
+  local id=${1?}
+  local files=("$ROOT/input/${id}/histo_manifest/${id}_"*_histo_manifest.txt)
+  if [[ ! -f ${files[0]} ]]; then
+    return
+  fi
+
+  F_STAIN=$2 F_INCL=$3 F_EXCL=$4 awk -F, '
+    BEGIN { s = ENVIRON["F_STAIN"]; i = tolower(ENVIRON["F_INCL"]); x = tolower(ENVIRON["F_EXCL"]) }
+    $1 != "" &&
+    (s == "" || $2 ~ ("^(" s ")$")) &&
+    (i == "" || tolower($6) ~ i) &&
+    (x == "" || tolower($6) !~ x) &&
+    !seen[$1]++ { print $1 }' "${files[@]}"
 }
 
 # Bring files for the listed slides from the cloud to local storage
@@ -892,7 +876,7 @@ function rsync_histo_all()
   # Specimen regexp
   local REGEXP=$1
 
-  local id args FULL_MANIFEST SVSLIST
+  local id args SVSLIST
   while read -r id args; do
     if [[ $id =~ $REGEXP ]]; then
 
@@ -901,13 +885,7 @@ function rsync_histo_all()
         update_histo_match_manifest_specimen $id > /dev/null
       fi
 
-      FULL_MANIFEST=$ROOT/input/${id}/histo_manifest/${id}_full_manifest.csv
-      if [[ ! -f $FULL_MANIFEST ]]; then
-        echo "WARNING: missing $FULL_MANIFEST, run without -M. Skipping $id"
-        continue
-      fi
-
-      SVSLIST=$(filter_specimen_full_manifest "$FULL_MANIFEST" "$stain_re" "$incl_re" "$excl_re")
+      SVSLIST=$(filter_specimen_manifest_slides $id "$stain_re" "$incl_re" "$excl_re")
       rsync_histo_proc $id $dryrun $SVSLIST
     fi
   done < "$MDIR/histo_matching.txt"
@@ -1223,7 +1201,7 @@ function usage()
   echo "                                              : Compute density maps with WildCat"
   echo "  rsync_histo_all [-D] [-M] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]"
   echo "                                              : Download remote processing results for"
-  echo "                                                slides in manifest (not duplicate/exclude)"
+  echo "                                                slides in the per-block histo manifests"
   echo "  rsync_histo_annot_all [regex]               : Download remote annotations"
   echo "  delete_density_maps_all <stain> [regex]     : Delete density maps once no longer needed"
   echo "Blockface functions:"

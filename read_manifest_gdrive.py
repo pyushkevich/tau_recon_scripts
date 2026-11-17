@@ -54,6 +54,14 @@ if len(recs) > 0:
         'Tags': df.Tags
     })
 
+    # Free-text columns must not contain commas or quotes, since the shell
+    # scripts parse this CSV by splitting on commas. Multiple tags become
+    # semicolon-separated, e.g. "good, rescan" -> "good;rescan"
+    for col in ('Certainty', 'Tags'):
+        df_num[col] = (df_num[col].astype(str)
+                       .str.replace(r'\s*[,;"\r\n]+\s*', ';', regex=True)
+                       .str.strip('; '))
+
     # Write to CSV
     df_num.to_csv(args.csv, index=False)
 
