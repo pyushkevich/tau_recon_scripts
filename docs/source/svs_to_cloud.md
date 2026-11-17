@@ -11,7 +11,7 @@ Primary functions:
   check_for_new_slides_all [regex]            : Update online histology spreadsheet
   update_histo_match_manifest_all [-C] [regex]: Update manifests (-C: clear cached sheet)
   preprocess_slides_all [-D] [-F] [regex]     : Run basic pre-processing on slides in GCP
-  nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP
+  nissl_multichannel_all [-D] [-F] [-M] [regex]: Run DeepCluster on NISSL slides in GCP
   density_map_all [-L] [-D] [-F] <stain> <model> [regex]
                                               : Compute density maps with WildCat
   rsync_histo_all [-D] [-M] [-N] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]

@@ -736,10 +736,12 @@ function blockface_preprocess_all()
 #   force (if set, clobber existing results)
 function nissl_multichannel_specimen()
 {
-  read -r id dryrun force args <<< "$@"
+  read -r id dryrun force nomanifest args <<< "$@"
 
   # Get the list of slides that are eligible
-  update_histo_match_manifest_specimen $id > /dev/null
+  if [[ $nomanifest -eq 0 ]]; then
+    update_histo_match_manifest_specimen $id > /dev/null
+  fi
   SVSLIST=$(get_specimen_manifest_slides $id NISSL)
 
   # Get a full directory dump
@@ -789,11 +791,13 @@ function nissl_multichannel_all()
   # Read the command-line options\
   local dryrun=0
   local force=0
+  local nomanifest=0
 
-  while getopts "DF" opt; do
+  while getopts "DFM" opt; do
     case $opt in
       D) dryrun=1;;
       F) force=1;;
+      M) nomanifest=1;;
       \?) echo "Unknown option $OPTARG"; exit 2;;
     esac
   done
@@ -807,7 +811,7 @@ function nissl_multichannel_all()
   # Process the individual blocks
   while read -r id url; do
     if [[ $id =~ $REGEXP ]]; then
-      nissl_multichannel_specimen ${id} ${dryrun} ${force}
+      nissl_multichannel_specimen ${id} ${dryrun} ${force} ${nomanifest}
     fi
   done < "$MDIR/histo_matching.txt"
 }
@@ -1288,7 +1292,7 @@ function usage()
   echo "  check_for_new_slides_all [regex]            : Update online histology spreadsheet"
   echo "  update_histo_match_manifest_all [-C] [regex]: Update manifests (-C: clear cached sheet)"
   echo "  preprocess_slides_all [-D] [-F] [regex]     : Run basic pre-processing on slides in GCP"
-  echo "  nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP"
+  echo "  nissl_multichannel_all [-D] [-F] [-M] [regex]: Run DeepCluster on NISSL slides in GCP"
   echo "  density_map_all [-L] [-D] [-F] [-M] <stain> <model> [regex] "
   echo "                                              : Compute density maps with WildCat"
   echo "  rsync_histo_all [-D] [-M] [-N] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]"
