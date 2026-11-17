@@ -859,8 +859,9 @@ function rsync_histo_proc()
   local SVSRE
   SVSRE=$(printf '%s\n' "${SVSLIST[@]}" | sed -e 's/[][\.^$*+?(){}|]/\\&/g' | paste -sd '|' -)
 
-  # Create some exclusions (including thumbnail that takes up space and is not super useful)
-  local EXCL="^(?!(?:${SVSRE})/).*|.*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff|thumbnail\.tiff|label\.tiff|macro\.tiff"
+  # Exclude files not used locally, incl. all TIFFs (x16 pyramid, density map,
+  # thumbnail, label, macro). Each pattern must match from the start of the path
+  local EXCL="^(?!(?:${SVSRE})/).*|.*\.tiff$|.*_x16\.png|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat"
 
   local RSYNC_OPTS=(-R)
   if [[ $dryrun -gt 0 ]]; then
