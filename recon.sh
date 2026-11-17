@@ -4533,8 +4533,12 @@ function splat_density()
     # Does the tangle density exist
     if [[ $MATCHED_NISSL_SVS ]]; then 
     
-      if [[ $SKIPLEVEL -gt 0 && -f $SLIDE_DENSITY_MAP ]]; then
-        echo "Skipping density warping for $svs"
+      # With -s, leave out slides whose density map has not been computed or
+      # synced yet (without -s, a missing density map is an error). Slides
+      # that were done before cannot be skipped: the warped maps are kept in
+      # $TMPDIR only and every slide is needed for the splat
+      if [[ $SKIPLEVEL -gt 0 && ! -f $SLIDE_DENSITY_MAP ]]; then
+        echo "Skipping $svs: no density map $SLIDE_DENSITY_MAP"
         continue
       fi
     
@@ -4632,7 +4636,7 @@ function splat_density_all()
             for block in $blocks; do
               # Submit the jobs
               pybatch -N "splat_density_${stain}_${model}_${contrast}_${id}_${block}" -m 8G \
-                $0 -d splat_density $id $block $stain $model $contrast
+                $0 -d -s $SKIPLEVEL splat_density $id $block $stain $model $contrast
             done
           fi
         done < "$MDIR/blockface_src.txt"

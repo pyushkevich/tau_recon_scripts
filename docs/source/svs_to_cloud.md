@@ -14,7 +14,7 @@ Primary functions:
   nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP
   density_map_all [-L] [-D] [-F] <stain> <model> [regex]
                                               : Compute density maps with WildCat
-  rsync_histo_all [-D] [-M] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]
+  rsync_histo_all [-D] [-M] [-N] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]
                                               : Download remote processing results for
                                                 slides in the per-block histo manifests
   rsync_histo_annot_all [regex]               : Download remote annotations
@@ -169,6 +169,7 @@ Only slides that are in the per-block histology manifests (`input/<id>/histo_man
 * `-i <regex>`: only copy slides whose `Tags` column contains a match (case-insensitive)
 * `-x <regex>`: skip slides whose `Tags` column contains a match (case-insensitive)
 * `-M`: don't re-download the manifest from the Google Sheet; use the existing per-block manifests
+* `-N`: don't download density maps (the `density` folder of each slide)
 * `-D`: dry run (`gsutil rsync -n`), shows what would be copied
 
 Local files from slides that were copied earlier but no longer pass the filters are not deleted.

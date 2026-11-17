@@ -838,11 +838,11 @@ function filter_specimen_manifest_slides()
 }
 
 # Bring files for the listed slides from the cloud to local storage
-#   usage: rsync_histo_proc <id> <dryrun> <svs> [svs ...]
+#   usage: rsync_histo_proc <id> <dryrun> <nodensity> <svs> [svs ...]
 function rsync_histo_proc()
 {
-  local id=${1?} dryrun=${2?}
-  shift 2
+  local id=${1?} dryrun=${2?} nodensity=${3?}
+  shift 3
   local SVSLIST=("$@")
 
   if [[ ${#SVSLIST[@]} -eq 0 ]]; then
@@ -863,6 +863,11 @@ function rsync_histo_proc()
   # thumbnail, label, macro). Each pattern must match from the start of the path
   local EXCL="^(?!(?:${SVSRE})/).*|.*\.tiff$|.*_x16\.png|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat"
 
+  # Optionally skip the density maps (the <svs>/density/ folders)
+  if [[ $nodensity -gt 0 ]]; then
+    EXCL="${EXCL}|[^/]+/density/.*"
+  fi
+
   local RSYNC_OPTS=(-R)
   if [[ $dryrun -gt 0 ]]; then
     RSYNC_OPTS+=(-n)
@@ -879,15 +884,16 @@ function rsync_histo_proc()
 function rsync_histo_all()
 {
   local OPTIND=1 opt
-  local stain_re="" incl_re="" excl_re="" dryrun=0 nomanifest=0
+  local stain_re="" incl_re="" excl_re="" dryrun=0 nomanifest=0 nodensity=0
 
-  while getopts "s:i:x:DM" opt; do
+  while getopts "s:i:x:DMN" opt; do
     case $opt in
       s) stain_re=$OPTARG;;
       i) incl_re=$OPTARG;;
       x) excl_re=$OPTARG;;
       D) dryrun=1;;
       M) nomanifest=1;;
+      N) nodensity=1;;
       \?) echo "Unknown option $OPTARG"; exit 2;;
       :) echo "Option $OPTARG requires an argument"; exit 2;;
     esac
@@ -909,7 +915,7 @@ function rsync_histo_all()
       fi
 
       SVSLIST=$(filter_specimen_manifest_slides $id "$stain_re" "$incl_re" "$excl_re")
-      rsync_histo_proc $id $dryrun $SVSLIST
+      rsync_histo_proc $id $dryrun $nodensity $SVSLIST
     fi
   done < "$MDIR/histo_matching.txt"
 }
@@ -1285,7 +1291,7 @@ function usage()
   echo "  nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP"
   echo "  density_map_all [-L] [-D] [-F] [-M] <stain> <model> [regex] "
   echo "                                              : Compute density maps with WildCat"
-  echo "  rsync_histo_all [-D] [-M] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]"
+  echo "  rsync_histo_all [-D] [-M] [-N] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]"
   echo "                                              : Download remote processing results for"
   echo "                                                slides in the per-block histo manifests"
   echo "  rsync_histo_annot_all [regex]               : Download remote annotations"
