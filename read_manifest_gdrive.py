@@ -1,15 +1,19 @@
 import gspread
 from gspread.utils import absolute_range_name, fill_gaps, numericise_all, to_records
-import pandas as pd
 import argparse
+import csv
 import json
 import os
+import re
 import sys
 import tempfile
 import time
 
 # Name of the spreadsheet on Google Drive
 SPREADSHEET = "HistologyMatching"
+
+# Columns written to the output CSV (all must be present in the worksheet)
+COLUMNS = ['Slide', 'Stain', 'Block', 'Section', 'Slice', 'Certainty', 'Tags']
 
 # Name of the cache file inside the cache directory
 CACHE_FILE = "worksheets.json"
@@ -90,6 +94,22 @@ def worksheet_records(rows):
     return to_records(rows[0], [numericise_all(r) for r in rows[1:]])
 
 
+def to_int(x):
+    """Integer value of a cell, or '' if it is blank or not an integer."""
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return ''
+    return int(f) if f.is_integer() else ''
+
+
+def clean_text(x):
+    """Free-text columns must not contain commas or quotes, since the shell
+    scripts parse the CSV by splitting on commas. Multiple tags become
+    semicolon-separated, e.g. "good, rescan" -> "good;rescan"."""
+    return re.sub(r'\s*[,;"\r\n]+\s*', ';', str(x)).strip('; ')
+
+
 # Parse the arguments
 args = parse.parse_args()
 
@@ -104,34 +124,20 @@ if len(match) != 1:
         print("No matches or multiple matches for ID {}: {}".format(args.id, match))
         sys.exit(255)
 
-# Extract the worksheet to PANDAS
+# Extract the worksheet
 recs = worksheet_records(sheets[match[0]])
-if len(recs) > 0:
-    df = pd.DataFrame(recs)
 
-    # Create a new frame with the required fields converted to numeric format
-    df_num = pd.DataFrame({
-        'Slide': df.Slide.astype('str'),
-        'Stain': df.Stain,
-        'Block': df.Block,
-        'Section': pd.to_numeric(df.Section, 'coerce', downcast='signed').astype('Int64'),
-        'Slice': pd.to_numeric(df.Slice, 'coerce', downcast='signed').astype('Int64'),
-        'Certainty': df.Certainty,
-        'Tags': df.Tags
-    })
+missing = [c for c in COLUMNS if recs and c not in recs[0]]
+if missing:
+    print("Worksheet {} is missing columns {}".format(match[0], missing))
+    sys.exit(255)
 
-    # Free-text columns must not contain commas or quotes, since the shell
-    # scripts parse this CSV by splitting on commas. Multiple tags become
-    # semicolon-separated, e.g. "good, rescan" -> "good;rescan"
-    for col in ('Certainty', 'Tags'):
-        df_num[col] = (df_num[col].astype(str)
-                       .str.replace(r'\s*[,;"\r\n]+\s*', ';', regex=True)
-                       .str.strip('; '))
-
-    # Write to CSV
-    df_num.to_csv(args.csv, index=False)
-
-else:
-    df_blank = pd.DataFrame(
-        {'Slide': [], 'Stain': [], 'Block': [], 'Section': [], 'Slice': [], 'Certainty': [], 'Tags': []})
-    df_blank.to_csv(args.csv, index=False)
+# Write to CSV
+with open(args.csv, 'w', newline='') as f:
+    w = csv.writer(f, lineterminator='\n')
+    w.writerow(COLUMNS)
+    for r in recs:
+        w.writerow([
+            r['Slide'], r['Stain'], r['Block'],
+            to_int(r['Section']), to_int(r['Slice']),
+            clean_text(r['Certainty']), clean_text(r['Tags'])])
