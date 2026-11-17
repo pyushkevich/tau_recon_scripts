@@ -15,3 +15,18 @@ itksnap-wt -i <path_to_workspace>/<workspace>.itksnap -a $ROOT/tmp/snapws/<works
 ```
 
 You can now use Cyberduck or Filezilla to download the folder `$ROOT/tmp/snapws` and open the workspace locally. 
+
+## Fixing manifest files corrupted by Excel
+
+Excel can save CSV files with Windows encodings, breaking code. To fix a Windows-encoded file (e.g., `manifest/hiresmri_src.csv`), run these commands:
+
+```sh
+# Convert, save to a temp file
+dos2unix < manifest/hiresmri_src.csv > /tmp/hiresmri_src.csv
+
+# Make sure temp file is correct (not empty, has same lines)
+cat /tmp/hiresmri_src.csv
+
+# Replace old file with temp file
+cp /tmp/hiresmri_src.csv manifest/hiresmri_src.csv
+```
