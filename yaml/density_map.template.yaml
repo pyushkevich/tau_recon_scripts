@@ -4,6 +4,12 @@ metadata:
   name: hist-torch-job-%JOBID%
 spec:
   backoffLimit: 2
+  podFailurePolicy:
+    rules:
+    - action: Ignore
+      onPodConditions:
+      - type: DisruptionTarget
+  ttlSecondsAfterFinished: 86400
   template:
     metadata:
       name: my-gpu-pod-torch
@@ -22,7 +28,8 @@ spec:
                "-o", "%OUTPUT%",
                "-p", "cfn-cluster-test",
                "-k", "/var/secrets/google/key.json",
-               "-W", "1536",
+               "-W", "2048",
+               "-F",
                "-D", "%DOWNSAMPLE%"]
         resources:
           limits:

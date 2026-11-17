@@ -4,6 +4,7 @@ metadata:
   name: blockface-preproc-job-%JOBID%
 spec:
   backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
   template:
     metadata:
       name: blockface-preproc-pod

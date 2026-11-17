@@ -4,6 +4,7 @@ metadata:
   name: hist-torch-job-%JOBID%
 spec:
   backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
   template:
     metadata:
       name: my-gpu-pod-torch
