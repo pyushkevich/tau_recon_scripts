@@ -19,7 +19,9 @@ option_list <- list(
                help="Printf-like pattern for output PDFs with plots, %d for plot index",
                metavar="pattern"),
    make_option(c("-f", "--flip"), type = "integer", default = 0,
-               help="Z flipping (1: no flip, -1: flip, 0: try both, default)")
+               help="Z flipping (1: no flip, -1: flip, 0: try both, default)"),
+   make_option(c("-c", "--corr"), type = "character", default = "s",
+               help="Correlation type (p: Pearson, s: Spearman, default)")
 );
 opt_parser <- OptionParser(option_list=option_list);
 opt <- parse_args(opt_parser);
@@ -28,6 +30,17 @@ if (is.null(opt$mri) || is.null(opt$blockface) || is.null(opt$output)){
    print_help(opt_parser)
    stop("Required inputs missing")
 }
+
+# Correlation type
+if(opt$corr == "p") {
+  cor_type = "pearson"
+} else if(opt$corr == "s") {
+  cor_type = "spearman"
+} else {
+  stop("Invalid correlation type, must be 'p' or 's'")
+}
+
+print(paste("Using correlation type: ", cor_type))
 
 # Read the blockface data
 B<-read.csv(opt$blockface,header=F,col.names = c('id','block','slice','x','y','z','area','perim'))
@@ -86,10 +99,11 @@ objfun<-function(p)
 {
   Br = remap_bf_z(B, flip, p[1], 1.0, p[3:length(p)]);
   Br$tarea = approx(x=M$z, y=M$area, xout=Br$z, method="linear", yleft=0, yright=0)$y
-  rcoeff=cor(Br$tarea, Br$area, method="spearman")
+  rcoeff=cor(Br$tarea, Br$area, method=cor_type)
   # print(rcoeff)
   return(1.0 - rcoeff)
 }
+
 
 # Function to plot results
 objplt<-function(p, mode)
@@ -98,11 +112,11 @@ objplt<-function(p, mode)
   Br$tarea = approx(x=M$z, y=M$area, xout=Br$z, method="linear", yleft=0, yright=0)$y
   sum=summary(rlm(tarea ~ area, data=Br))
   if(mode == 1)
-    ggplot(data=Br, aes(x=z,y=area,color=block)) + geom_point() + geom_point(aes(y=tarea, col=NA))
+    ggplot(data=Br, aes(x=z,y=area,color=block)) + geom_point() + geom_point(aes(y=tarea, col=NA)) + ggtitle(paste("Objective function: ", objfun(p)))
   else
     ggplot(data=Br, aes(x=area, y=tarea, color=block)) + geom_point() +
       ggtitle(paste("Robust regression coefficient: ", round(cor(Br$tarea, Br$area,
-                                                                 method="spearman"),6)))
+                                                                 method=cor_type),6)))
 }
 
 # Set up the matrix of constraints (positive paddings) diag(N-1)
@@ -155,8 +169,13 @@ for(b in levels(as.factor(B$block))) {
   Bi=subset(Br, block==b)
 
   # Centroid offsets
+  Bi$x[is.na(Bi$x)] = 0
+  Bi$y[is.na(Bi$y)] = 0
   dx = sum(Bi$x * Bi$area)/sum(Bi$area) - sum(Bi$tx * Bi$tarea)/sum(Bi$tarea)
   dy = sum(Bi$y * Bi$area)/sum(Bi$area) - sum(Bi$ty * Bi$tarea)/sum(Bi$tarea)
+
+  # print(paste(sum(is.na(Bi$x)), sum(is.na(Bi$y))))
+  # print(paste("Block ", b, ": dx = ", dx, ", dy = ", dy, ", Bi$area = ", sum(Bi$area), ", Bi$tarea = ", sum(Bi$tarea)))
 
   model = lm(zorig ~ z, subset(Br, block==b))
   mtx = rbind(c(1, 0, 0, dx),
@@ -164,9 +183,13 @@ for(b in levels(as.factor(B$block))) {
               c(0, 0, model$coefficients[2], model$coefficients[1]),
               c(0, 0, 0, 1))
 
+  if(any(is.na(mtx))) {
+    print(paste("Warning: NA values in output matrix for block ", b))
+  }
   write.table(mtx,
               file=sprintf(opt$output, b),
               row.names=FALSE, col.names=FALSE)
+  print(paste("Wrote output matrix for block ", b, " to ", sprintf(opt$output, b)))
 }
 
 # Generate a plot of the result
@@ -176,3 +199,18 @@ ggsave(sprintf(opt$plot, 1))
 objplt(res$par, 2)
 ggsave(sprintf(opt$plot, 2))
 
+# Plot the raw data
+ggplot(data=B, aes(x=z,y=area,color=block)) + geom_point() + ggtitle("Blockface area by z, raw")
+ggsave(sprintf(opt$plot, 3))
+
+ggplot(data=M, aes(x=z,y=area)) + geom_point() + ggtitle("MRI slice area by z, raw")
+ggsave(sprintf(opt$plot, 4))
+
+# Plot initial guess
+flip = 1
+objplt(c(find_init_offset(1), 1.0, rep(0.5, N-1)), 1)
+ggsave(sprintf(opt$plot, 5))
+
+flip = -1
+objplt(c(find_init_offset(-1), 1.0, rep(0.5, N-1)), 1)
+ggsave(sprintf(opt$plot, 6))
