@@ -290,7 +290,7 @@ function check_for_new_slides_all()
   # Get the listing of all specimens - not just the ones in histo_matching.txt because 
   # there may be new specimens that need to be added to the manifest
   FLISTING=$(mktemp /tmp/specimen-list.XXXXXX)
-  gsutil ls gs://mtl_histology | awk -F '/' '{print $4}' | egrep '^INDD.*|^HN^C*' | sort -u > $FLISTING
+  gsutil ls gs://mtl_histology | awk -F '/' '{print $4}' | egrep '^INDD.*|^HNL*' | sort -u > $FLISTING
 
   # List all the entries in FLISTING that are not in histo_matching.txt using comm
   mkdir -p $ROOT/tmp/manifest
@@ -563,11 +563,19 @@ function preprocess_slides_all()
 #   force (if set, clobber existing results)
 function density_map_specimen()
 {
-  read -r id stain model dryrun force legacy args <<< "$@"
+  read -r id stain model dryrun force legacy nomanifest args <<< "$@"
 
   # Get the list of slides that are eligible
-  update_histo_match_manifest_specimen $id > /dev/null
+  if [[ $nomanifest -eq 0 ]]; then
+    update_histo_match_manifest_specimen $id > /dev/null
+  fi
   SVSLIST=$(get_specimen_manifest_slides $id $stain)
+
+  # Check if there are any slides to process and exit if not
+  if [[ ! $SVSLIST ]]; then
+    echo "No slides found for $id $stain"
+    return
+  fi
 
   # Get a full directory dump
   FREMOTE=$(mktemp /tmp/dmap-remote-list.XXXXXX)
@@ -631,13 +639,7 @@ function density_map_specimen()
 
     # Run the yaml
     # If dryrun, just inform that we would process the slide
-    if [[ $dryrun -gt 0 ]]; then
-      echo "Would run: kubectl apply -f $YAML"
-    else
-      echo "Scheduling job $id $svs $YAML"
-      kube apply -f $YAML
-    fi
-
+    run_kube_job $YAML $dryrun
 
   done
 }
@@ -648,12 +650,14 @@ function density_map_all()
   local dryrun=0
   local force=0
   local legacy=0
+  local nomanifest=0
 
-  while getopts "DFL" opt; do
+  while getopts "DFLM" opt; do
     case $opt in
       D) dryrun=1;;
       F) force=1;;
       L) legacy=1;;
+      M) nomanifest=1;;
       \?) echo "Unknown option $OPTARG"; exit 2;;
     esac
   done
@@ -669,7 +673,7 @@ function density_map_all()
   # Process the individual blocks
   while read -r id url; do
     if [[ $id =~ $REGEXP ]]; then
-      density_map_specimen ${id} ${stain} ${model} ${dryrun} ${force} ${legacy}
+      density_map_specimen ${id} ${stain} ${model} ${dryrun} ${force} ${legacy} ${nomanifest}
     fi
   done < "$MDIR/histo_matching.txt"
 }
@@ -740,12 +744,6 @@ function nissl_multichannel_specimen()
       continue
     fi
 
-    # If dryrun, just inform that we would process the slide
-    if [[ $dryrun -gt 0 ]]; then
-      echo "Needs deepcluster mapping:" $id $svs
-      continue
-    fi
-
     # Geberate a job ID and YAML file
     JOB=$(echo $id $svs | md5sum | cut -c 1-6)
     YAML=/tmp/density_${JOB}.yaml
@@ -756,8 +754,8 @@ function nissl_multichannel_specimen()
       > $YAML
 
     # Run the yaml
-    echo "Scheduling job $id $svs $YAML"
-    kube apply -f $YAML
+    # If dryrun, just inform that we would process the slide
+    run_kube_job $YAML $dryrun
 
   done
 }
@@ -977,6 +975,21 @@ function rsync_histo_regeval_all()
 
 }
 
+function run_kube_job()
+{
+  local YAML=${1?}
+  local dryrun=${2?}
+
+
+  if [[ $dryrun -gt 0 ]]; then
+    echo "Would run: kubectl apply -f $YAML"
+  else
+    echo "Running kubectl apply -f $YAML"
+    local NAME=$(grep "^..name:" < $YAML | sed -e "s/.*:\s*//")
+    kube get job $NAME >/dev/null 2>&1 || kube apply -f $YAML
+  fi
+}
+
 
 function blockface_multichannel_block()
 {
@@ -1005,7 +1018,7 @@ function blockface_multichannel_block()
     elif ! grep "${base}_deepcluster_rgb.nii.gz" $FREMOTEPROC > /dev/null; then
       echo $base
     fi
-  done < $FREMOTE | awk -F_ '{print $3}' > $FSEC
+  done < $FREMOTE | awk -F_ '{printf "%i\n", $3}' > $FSEC
 
   # Check if any sections to do
   if [[ $(wc -l < $FSEC) -eq 0 ]]; then
@@ -1031,11 +1044,7 @@ function blockface_multichannel_block()
 
     # Run the yaml
     echo "Scheduling job $id $block ${s} $((s+BS)) $YAML"
-    if [[ $dryrun -gt 0 ]]; then
-      echo "Would run: kubectl apply -f $YAML"
-    else
-      kube apply -f $YAML
-    fi
+    run_kube_job $YAML $dryrun
   done
 }
 
@@ -1111,7 +1120,7 @@ function usage()
   echo "  update_histo_match_manifest_all [regex]     : Update manifests for all/some specimens"
   echo "  preprocess_slides_all [-D] [-F] [regex]     : Run basic pre-processing on slides in GCP"
   echo "  nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP"
-  echo "  density_map_all [-L] [-D] [-F] <stain> <model> [regex] "
+  echo "  density_map_all [-L] [-D] [-F] [-M] <stain> <model> [regex] "
   echo "                                              : Compute density maps with WildCat"
   echo "  rsync_histo_all [regex]                     : Download remote processing results"
   echo "  rsync_histo_annot_all [regex]               : Download remote annotations"
@@ -1124,6 +1133,7 @@ function usage()
   echo "  -D                                          : Dry run: just show slides that need action"
   echo "  -F                                          : Force: override existing results"
   echo "  -L                                          : Use legacy code"
+  echo "  -M                                          : Skip manifest update"
 }
 
 # Read the command-line options
