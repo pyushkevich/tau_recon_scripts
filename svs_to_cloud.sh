@@ -98,6 +98,10 @@ function update_histo_match_manifest_specimen()
   # Download the manifest
   download_histo_manifest "$id" "$TMPFILE_FULL"
 
+  # Keep an unfiltered copy (all columns, incl. Certainty and Tags) for
+  # functions that apply their own filters, e.g., rsync_histo_all
+  cp "$TMPFILE_FULL" "$HISTO_MATCH_MANIFEST_DIR/${id}_full_manifest.csv"
+
   # Check exclusions
   awk -F, '$6 !~ "duplicate|exclude|noquant" && $4 !~ "multiple" && NR > 1 {print $0}' $TMPFILE_FULL > $TMPFILE_CLEAN
 
@@ -788,28 +792,123 @@ function nissl_multichannel_all()
   done < "$MDIR/histo_matching.txt"
 }
 
-# Bring files from the cloud to local storage
+# Print the ids of slides in a full specimen manifest (as saved by
+# update_histo_match_manifest_specimen) that pass the filters below.
+# Slides marked duplicate/exclude in the Certainty column are always dropped.
+#   usage: filter_specimen_full_manifest <csv> [stain_re] [incl_re] [excl_re]
+#   stain_re : Stain column must fully match this regex (case-sensitive)
+#   incl_re  : Tags column must contain a match to this regex (case-insensitive)
+#   excl_re  : Tags column must not contain a match to this regex (case-insensitive)
+function filter_specimen_full_manifest()
+{
+  local csv=${1?} stain_re=$2 incl_re=$3 excl_re=$4
+  python3 - "$csv" "$stain_re" "$incl_re" "$excl_re" <<'EOF'
+import csv, re, sys
+fn, stain_re, incl_re, excl_re = sys.argv[1:5]
+cert_excl = re.compile('duplicate|exclude', re.I)
+stain_re = re.compile(stain_re) if stain_re else None
+incl_re = re.compile(incl_re, re.I) if incl_re else None
+excl_re = re.compile(excl_re, re.I) if excl_re else None
+seen = set()
+with open(fn, newline='') as f:
+    for row in csv.DictReader(f):
+        svs = (row.get('Slide') or '').strip()
+        stain = (row.get('Stain') or '').strip()
+        cert = row.get('Certainty') or ''
+        tags = row.get('Tags') or ''
+        if not svs or svs in seen:
+            continue
+        if cert_excl.search(cert):
+            continue
+        if stain_re and not stain_re.fullmatch(stain):
+            continue
+        if incl_re and not incl_re.search(tags):
+            continue
+        if excl_re and excl_re.search(tags):
+            continue
+        seen.add(svs)
+        print(svs)
+EOF
+}
+
+# Bring files for the listed slides from the cloud to local storage
+#   usage: rsync_histo_proc <id> <dryrun> <svs> [svs ...]
 function rsync_histo_proc()
 {
-  read -r id args <<< "$@"
+  local id=${1?} dryrun=${2?}
+  shift 2
+  local SVSLIST=("$@")
+
+  if [[ ${#SVSLIST[@]} -eq 0 ]]; then
+    echo "No slides selected for $id. Skipping"
+    return
+  fi
 
   # Location of the histology data in the cloud
   local SPECIMEN_HISTO_GCP_ROOT="gs://mtl_histology/${id}/histo_proc"
   local SPECIMEN_HISTO_LOCAL_ROOT="$ROOT/input/${id}/histo_proc"
 
+  # Exclude every slide folder that is not in the list. gsutil matches -x
+  # (a Python regex) against the start of the path relative to the root
+  local SVSRE
+  SVSRE=$(printf '%s\n' "${SVSLIST[@]}" | sed -e 's/[][\.^$*+?(){}|]/\\&/g' | paste -sd '|' -)
+
   # Create some exclusions (including thumbnail that takes up space and is not super useful)
-  local EXCL=".*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff|thumbnail\.tiff|label\.tiff|macro\.tiff"
+  local EXCL="^(?!(?:${SVSRE})/).*|.*_x16\.png|.*_x16_pyramid\.tiff|.*mrilike\.nii\.gz|.*tearfix\.nii\.gz|.*affine\.mat|.*densitymap\.tiff|thumbnail\.tiff|label\.tiff|macro\.tiff"
+
+  local RSYNC_OPTS=(-R)
+  if [[ $dryrun -gt 0 ]]; then
+    RSYNC_OPTS+=(-n)
+  fi
+
+  echo "Syncing ${#SVSLIST[@]} slides for $id"
   mkdir -p "$SPECIMEN_HISTO_LOCAL_ROOT"
-  gsutil -m rsync -R -x "$EXCL" "$SPECIMEN_HISTO_GCP_ROOT/" "$SPECIMEN_HISTO_LOCAL_ROOT/"
+  gsutil -m rsync "${RSYNC_OPTS[@]}" -x "$EXCL" \
+    "$SPECIMEN_HISTO_GCP_ROOT/" "$SPECIMEN_HISTO_LOCAL_ROOT/" < /dev/null
 }
 
-# Bring files from the cloud to local storage
+# Bring files from the cloud to local storage, only for slides that are in
+# the histology matching manifest and pass the optional filters
 function rsync_histo_all()
 {
-  REGEXP=$1
+  local OPTIND=1 opt
+  local stain_re="" incl_re="" excl_re="" dryrun=0 nomanifest=0
+
+  while getopts "s:i:x:DM" opt; do
+    case $opt in
+      s) stain_re=$OPTARG;;
+      i) incl_re=$OPTARG;;
+      x) excl_re=$OPTARG;;
+      D) dryrun=1;;
+      M) nomanifest=1;;
+      \?) echo "Unknown option $OPTARG"; exit 2;;
+      :) echo "Option $OPTARG requires an argument"; exit 2;;
+    esac
+  done
+
+  # Get remaining args
+  shift $((OPTIND - 1))
+
+  # Specimen regexp
+  local REGEXP=$1
+
+  local id args FULL_MANIFEST SVSLIST
   while read -r id args; do
     if [[ $id =~ $REGEXP ]]; then
-      rsync_histo_proc $id
+
+      # Refresh the manifest from Google Sheets unless told not to
+      if [[ $nomanifest -eq 0 ]]; then
+        update_histo_match_manifest_specimen $id > /dev/null
+      fi
+
+      FULL_MANIFEST=$ROOT/input/${id}/histo_manifest/${id}_full_manifest.csv
+      if [[ ! -f $FULL_MANIFEST ]]; then
+        echo "WARNING: missing $FULL_MANIFEST, run without -M. Skipping $id"
+        continue
+      fi
+
+      SVSLIST=$(filter_specimen_full_manifest "$FULL_MANIFEST" "$stain_re" "$incl_re" "$excl_re")
+      rsync_histo_proc $id $dryrun $SVSLIST
     fi
   done < "$MDIR/histo_matching.txt"
 }
@@ -1122,7 +1221,9 @@ function usage()
   echo "  nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP"
   echo "  density_map_all [-L] [-D] [-F] [-M] <stain> <model> [regex] "
   echo "                                              : Compute density maps with WildCat"
-  echo "  rsync_histo_all [regex]                     : Download remote processing results"
+  echo "  rsync_histo_all [-D] [-M] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]"
+  echo "                                              : Download remote processing results for"
+  echo "                                                slides in manifest (not duplicate/exclude)"
   echo "  rsync_histo_annot_all [regex]               : Download remote annotations"
   echo "  delete_density_maps_all <stain> [regex]     : Delete density maps once no longer needed"
   echo "Blockface functions:"

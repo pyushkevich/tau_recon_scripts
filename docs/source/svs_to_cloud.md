@@ -14,7 +14,9 @@ Primary functions:
   nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP
   density_map_all [-L] [-D] [-F] <stain> <model> [regex]
                                               : Compute density maps with WildCat
-  rsync_histo_all [regex]                     : Download remote processing results
+  rsync_histo_all [-D] [-M] [-s stain_re] [-i incl_tags_re] [-x excl_tags_re] [regex]
+                                              : Download remote processing results for
+                                                slides in manifest (not duplicate/exclude)
   rsync_histo_annot_all [regex]               : Download remote annotations
 Blockface functions:
   blockface_preprocess_all [regex]            : Run basic preprocessing on BF images in GCP
@@ -154,8 +156,18 @@ Run this command to extract low-resolution feature maps from Nissl slides using 
 This command is used to update the files on the local filesystem (`input` directory) with the latest copies of histology-derived maps on GCP. Simply run
 
 ```sh
-./svs_to_cloud.sh rsync_histo_all [regex]
+./svs_to_cloud.sh rsync_histo_all [options] [regex]
 ```
+
+Only slides listed in the specimen's histology matching manifest (Google Sheet) are copied, and slides whose `Certainty` column contains `duplicate` or `exclude` are skipped. Options:
+
+* `-s <regex>`: only copy slides whose `Stain` matches the regex exactly, e.g. `-s 'Tau|NISSL'`
+* `-i <regex>`: only copy slides whose `Tags` column contains a match (case-insensitive)
+* `-x <regex>`: skip slides whose `Tags` column contains a match (case-insensitive)
+* `-M`: don't re-download the manifest; use the copy saved in `input/<id>/histo_manifest/<id>_full_manifest.csv`
+* `-D`: dry run (`gsutil rsync -n`), shows what would be copied
+
+Local files from slides that were copied earlier but no longer pass the filters are not deleted.
 
 
 ## Troubleshooting:
