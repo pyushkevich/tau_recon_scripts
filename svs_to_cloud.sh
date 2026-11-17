@@ -15,6 +15,11 @@ fi
 
 MDIR=$ROOT/manifest
 
+# Local cache of the HistologyMatching Google spreadsheet (all worksheets are
+# fetched in one request and reused for HISTO_MANIFEST_CACHE_MAX_AGE seconds)
+HISTO_MANIFEST_CACHE_DIR=$ROOT/tmp/cache/gdrive/histo_matching
+HISTO_MANIFEST_CACHE_MAX_AGE=${HISTO_MANIFEST_CACHE_MAX_AGE:-600}
+
 # Histoannot server options
 PHAS_SERVER="https://histo.itksnap.org"
 PHAS_ANNOT_TASK=2
@@ -69,11 +74,16 @@ function download_histo_manifest()
   local id dest url args
   read -r id dest <<< "$@"
 
-  # Read the manifest using API
-  python $ROOT/scripts/read_manifest_gdrive.py -j $ROOT/private/credentials.json $id "$dest"
+  # Read the manifest using API (or the local cache of the spreadsheet)
+  python $ROOT/scripts/read_manifest_gdrive.py -j $ROOT/private/credentials.json \
+    --cache "$HISTO_MANIFEST_CACHE_DIR" --max-age "$HISTO_MANIFEST_CACHE_MAX_AGE" \
+    $id "$dest"
+}
 
-  # Sleep for a couple of seconds to prevent quota issues
-  sleep 2
+# Delete the local cache of the spreadsheet, forcing a fresh download
+function clear_histo_manifest_cache()
+{
+  rm -rf "$HISTO_MANIFEST_CACHE_DIR"
 }
 
 # Update the local copy of the histology manifest file for a single specimen/block
@@ -143,6 +153,18 @@ function update_histo_match_manifest_specimen()
 # Update the local copy of the histology manifest files
 function update_histo_match_manifest_all()
 {
+  local OPTIND=1 opt
+
+  while getopts "C" opt; do
+    case $opt in
+      C) clear_histo_manifest_cache;;
+      \?) echo "Unknown option $OPTARG"; exit 2;;
+    esac
+  done
+
+  # Get remaining args
+  shift $((OPTIND - 1))
+
   # Specimen regexp
   REGEXP=$1
 
@@ -1194,7 +1216,7 @@ function usage()
   echo "  -d                                          : Turn on command echoing (for debugging)"
   echo "Primary functions:"
   echo "  check_for_new_slides_all [regex]            : Update online histology spreadsheet"
-  echo "  update_histo_match_manifest_all [regex]     : Update manifests for all/some specimens"
+  echo "  update_histo_match_manifest_all [-C] [regex]: Update manifests (-C: clear cached sheet)"
   echo "  preprocess_slides_all [-D] [-F] [regex]     : Run basic pre-processing on slides in GCP"
   echo "  nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP"
   echo "  density_map_all [-L] [-D] [-F] [-M] <stain> <model> [regex] "

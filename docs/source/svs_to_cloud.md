@@ -9,7 +9,7 @@ Options:
   -d                                          : Turn on command echoing (for debugging)
 Primary functions:
   check_for_new_slides_all [regex]            : Update online histology spreadsheet
-  update_histo_match_manifest_all [regex]     : Update manifests for all/some specimens
+  update_histo_match_manifest_all [-C] [regex]: Update manifests (-C: clear cached sheet)
   preprocess_slides_all [-D] [-F] [regex]     : Run basic pre-processing on slides in GCP
   nissl_multichannel_all [-D] [-F] [regex]    : Run DeepCluster on NISSL slides in GCP
   density_map_all [-L] [-D] [-F] <stain> <model> [regex]
@@ -58,8 +58,10 @@ The command will also create file `new_specimens.csv` in `$ROOT/tmp/manifest/new
 This will update the local manifest files in `$ROOT/input/histo_manifest/` folders. These files are essentially a mirror of the Google Spreadsheet `HistologyMatching`. 
 
 ```sh
-./svs_to_cloud.sh update_histo_match_manifest_all <regex>
+./svs_to_cloud.sh update_histo_match_manifest_all [-C] <regex>
 ```
+
+To avoid one Google API round trip per specimen, all worksheets of `HistologyMatching` are downloaded in a single request and cached in `$ROOT/tmp/cache/gdrive/histo_matching`. All commands that read the manifest use this cache, and it is refreshed automatically once it is older than 10 minutes (set `HISTO_MANIFEST_CACHE_MAX_AGE` to a number of seconds to change this). If you just edited the spreadsheet, use `-C` to clear the cache and download it again.
 
 ## Preprocessing Histology Slides (`preprocess_slides_all`)
 
