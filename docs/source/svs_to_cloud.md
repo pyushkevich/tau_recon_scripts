@@ -18,6 +18,8 @@ Primary functions:
                                               : Download remote processing results for
                                                 slides in the per-block histo manifests
   rsync_histo_annot_all [regex]               : Download remote annotations
+  specimen_regex_by_stain [-M] [-i incl_tags_re] [-x excl_tags_re] <stain_re> <min_slides> [regex]
+                                              : Print regex of specimens with >= min_slides of stain
 Blockface functions:
   blockface_preprocess_all [regex]            : Run basic preprocessing on BF images in GCP
   blockface_multichannel_all [regex]          : Run feature extraction on BF images in GCP
@@ -170,6 +172,23 @@ Only slides that are in the per-block histology manifests (`input/<id>/histo_man
 * `-D`: dry run (`gsutil rsync -n`), shows what would be copied
 
 Local files from slides that were copied earlier but no longer pass the filters are not deleted.
+
+(specimen_regex_by_stain)=
+## Selecting specimens by stain (`specimen_regex_by_stain`)
+
+This command prints a regular expression that selects the specimens with at least a given number of slides of a stain, such as `^(HNL-11-15|HNL-33-18)$`. Use it as the specimen regex of any other command, in `svs_to_cloud.sh` or `recon.sh`:
+
+```sh
+# Specimens with at least 10 PV slides, not counting slides tagged "bad"
+./svs_to_cloud.sh specimen_regex_by_stain -x bad PV 10
+
+# Use the result directly
+RE=$(./svs_to_cloud.sh specimen_regex_by_stain PV 10)
+./svs_to_cloud.sh rsync_histo_all -M -s PV "$RE"
+./recon.sh match_ihc_to_nissl_all PV "$RE"
+```
+
+The stain must match the whole stain name, as with `rsync_histo_all -s`. Slides are counted from the per-block manifests, so duplicate, excluded and noquant slides are not counted. `-i`/`-x` filter slides by tags and `-M` skips the manifest update, as in `rsync_histo_all`. An optional last argument limits which specimens are checked. The slide count for each specimen is printed alongside the regex, but only the regex is captured by `$(...)`. If no specimen qualifies, the regex printed is `^$`, which selects nothing.
 
 
 ## Troubleshooting:

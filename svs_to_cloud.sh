@@ -914,6 +914,69 @@ function rsync_histo_all()
   done < "$MDIR/histo_matching.txt"
 }
 
+# Print a regular expression matching the specimens that have at least
+# <min_count> slides of a given stain in their histology manifests, to use as
+# the specimen regex of other commands, e.g.
+#   ./svs_to_cloud.sh rsync_histo_all -s PV "$(./svs_to_cloud.sh specimen_regex_by_stain PV 10)"
+# The stain is a regex that must match the whole stain name, as in
+# rsync_histo_all -s. Options -i/-x filter slides by tags and -M skips the
+# manifest update, also as in rsync_histo_all. Per-specimen slide counts are
+# printed to stderr, so only the regex goes to stdout.
+function specimen_regex_by_stain()
+{
+  local OPTIND=1 opt
+  local incl_re="" excl_re="" nomanifest=0
+
+  while getopts "i:x:M" opt; do
+    case $opt in
+      i) incl_re=$OPTARG;;
+      x) excl_re=$OPTARG;;
+      M) nomanifest=1;;
+      \?) echo "Unknown option $OPTARG" >&2; exit 2;;
+      :) echo "Option $OPTARG requires an argument" >&2; exit 2;;
+    esac
+  done
+
+  # Get remaining args
+  shift $((OPTIND - 1))
+
+  # Default to all specimens (bash 3.2 on macOS matches nothing with an empty regex)
+  local stain_re=${1?} min_count=${2?} REGEXP=${3:-.*}
+  if [[ ! $min_count =~ ^[0-9]+$ ]]; then
+    echo "Minimum slide count must be a number, got '$min_count'" >&2
+    exit 2
+  fi
+
+  local id args n matched=()
+  while read -r id args; do
+    if [[ $id && $id =~ $REGEXP ]]; then
+
+      # Refresh the manifest from Google Sheets unless told not to
+      if [[ $nomanifest -eq 0 ]]; then
+        update_histo_match_manifest_specimen $id > /dev/null
+      fi
+
+      n=$(filter_specimen_manifest_slides $id "$stain_re" "$incl_re" "$excl_re" | wc -l)
+      n=$((n))
+      echo "$id: $n slides" >&2
+      if [[ $n -ge $min_count ]]; then
+        matched+=("$id")
+      fi
+    fi
+  done < "$MDIR/histo_matching.txt"
+
+  if [[ ${#matched[@]} -eq 0 ]]; then
+    echo "No specimens have at least $min_count matching slides" >&2
+    # An empty regex would select every specimen, so print one that selects none
+    echo '^$'
+    return
+  fi
+
+  # Anchor the names, so that e.g. HNL-1 does not also select HNL-11
+  printf '%s\n' "${matched[@]}" | sed -e 's/[][\.^$*+?(){}|]/\\&/g' \
+    | paste -sd '|' - | sed -e 's/.*/^(&)$/'
+}
+
 function delete_density_maps()
 {
   read -r stain id args <<< "$@"
@@ -1227,6 +1290,8 @@ function usage()
   echo "                                                slides in the per-block histo manifests"
   echo "  rsync_histo_annot_all [regex]               : Download remote annotations"
   echo "  delete_density_maps_all <stain> [regex]     : Delete density maps once no longer needed"
+  echo "  specimen_regex_by_stain [-M] [-i incl_tags_re] [-x excl_tags_re] <stain_re> <min_slides> [regex]"
+  echo "                                              : Print regex of specimens with >= min_slides of stain"
   echo "Blockface functions:"
   echo "  blockface_preprocess_all [regex]            : Run basic preprocessing on BF images in GCP"
   echo "  blockface_multichannel_all [regex]          : Run feature extraction on BF images in GCP"
