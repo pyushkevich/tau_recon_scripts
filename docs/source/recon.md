@@ -23,7 +23,7 @@ and make sure that
 
 ## Generate masks for histology
 
-Run this command to generate foreground masks for all the histology slides in your project. 
+Foreground masks for the histology slides are generated automatically: NISSL masks by `recon_histo_all` and IHC masks by `match_ihc_to_nissl_all`. To generate (or refresh) the masks for all slides as a separate step, run
 
 ```sh
 ./recon.sh preproc_histology_all HNL-56-21
@@ -172,7 +172,7 @@ If the registration is not good, the ways to improve it are:
 
 ## Histology Mask Generation
 
-This is a simple step that generates foreground masks for all the histology images, including IHC. Make sure to run this before the histology-to-MRI and IHC-to-Nissl registration scripts. 
+This is a simple step that generates foreground masks for all the histology images, including IHC. Running it separately is optional: the histology-to-MRI registration (`recon_histo_all`) and the IHC-to-Nissl registration (`match_ihc_to_nissl_all`) generate any masks that are missing or older than the slide images, so new slides synced with `rsync_histo_all` are handled automatically. Masks are only generated for stains that have a classifier in `manual/common/slide_mask_rf_<stain>.dat`. 
 
 ```sh
 ./recon.sh preproc_histology_all HNL-56-21

@@ -6,7 +6,7 @@
 #
 # rsync_histo_all [RE]                          Pull features/densities (PY2)
 # rsync_histo_annot_all [RE]                    Pull annotations
-# preproc_histology_all [RE]                    Generate RGB masks (needed?)
+# preproc_histology_all [RE]                    Generate slide masks (optional, done by recon/match steps)
 #
 # recon_blockface_all [RE]                      Blockface to 3D volume
 # process_mri_all [RE]                          MRI 7T to 9.4T
@@ -2437,6 +2437,79 @@ function curl_cat_url()
   fi
 }
 
+# Generate the foreground mask for a single slide from its 40um RGB image,
+# using the stain-specific random forest classifier. Nothing is done if the
+# mask is newer than the RGB. Call set_ihc_slice_vars for the slide first.
+# If the RGB or the classifier is missing, prints a warning and returns 0;
+# callers that need the mask should check that $SLIDE_MASK exists.
+function preproc_histology_slide()
+{
+  local svs=${1?}
+
+  mkdir -p $SLIDE_WORK_DIR
+
+  # Make sure the preprocessing data for this slice exists, if not issue a warning
+  if [[ ! -f $SLIDE_RGB ]]; then
+    echo "WARNING: missing images for $svs"
+    return 0
+  fi
+
+  # The mask classifier is stain-specific
+  if [[ ! -f $SLIDE_MASK_GLOBAL_RFTRAIN ]]; then
+    echo "WARNING: no mask classifier $SLIDE_MASK_GLOBAL_RFTRAIN for $svs"
+    return 0
+  fi
+
+  # Generate a mask from the RGB. However, we skip this step if a mask
+  # already exists and is newer than the slide RGB
+  if [[ $SLIDE_RGB -nt $SLIDE_MASK ]]; then
+
+    # New command to generate a mask and also clear up streaks that are right
+    # along the mask border
+    c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
+        -pick 0 -thresh 0.5 inf 1 0 -as X \
+        -scale 0 -shift 1 -pad 32x32 32x32 0 -info -dilate 0 40x40 \
+        -insert X 1 -reslice-identity -push X -times \
+        -dilate 1 40x40 -info -push X -info -times \
+        -type short -o $SLIDE_MASK
+
+    # OLD CODE
+    #if [[ stain == "NISSL" ]]; then
+    #  c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
+    #    -pick 0 -thresh 0.5 inf 1 0 -o $SLIDE_MASK
+    #else
+    #  # On IHC, it is pretty hard to get rid of the slide border, but this additional
+    #  # processing should help clean up the mask
+    #  c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
+    #    -pick 0 -thresh 0.5 inf 1 0 -dilate 0 9x9 -dilate 1 9x9 -o $SLIDE_MASK
+    #fi
+
+  fi
+
+<<'DISABLE_DECONV'
+  # Generate the stain-specific RGB images for non-NISSL stains via color deconvolution
+  if [[ $SLIDE_RGB -nt $SLIDE_HEM_SCALAR ||  $SLIDE_RGB -nt $SLIDE_DAB_SCALAR ]]; then
+
+    # Generate the hematoxylin and DAB maps
+    # TODO: the RGB are probably useless
+    c2d -mcs $SLIDE_RGB \
+      -foreach -stretch 0 98% 0 1 -clip 0 1 -log10 -scale -1 -endfor \
+      -popas ODB -popas ODG -popas ODR \
+      -push ODR -push ODG -push ODB \
+      -wsum 1.88 -0.07 -0.60 -o $SLIDE_HEM_SCALAR -popas C_HEM \
+      -push C_HEM -scale 0.65 -push C_HEM -scale 0.70 -push C_HEM -scale 0.29 \
+      -foreach -scale -1 -exp -endfor \
+      -omc $SLIDE_HEM_RGB \
+      -clear -push ODR -push ODG -push ODB \
+      -wsum -0.55 -0.13 1.57 -o $SLIDE_DAB_SCALAR -popas C_DAB \
+      -push C_DAB -scale 0.27 -push C_DAB -scale 0.57 -push C_DAB -scale 0.78 \
+      -foreach -scale -1 -exp -endfor \
+      -omc $SLIDE_DAB_RGB
+
+  fi
+DISABLE_DECONV
+}
+
 function preproc_histology()
 {
   # What specimen and block are we doing this for?
@@ -2449,64 +2522,9 @@ function preproc_histology()
   local svs stain dummy section slice
   while IFS=, read -r svs stain dummy section slice args; do
 
-    # Set the variables
+    # Set the variables and generate the mask
     set_ihc_slice_vars $id $block $svs $stain $section $slice $args
-    mkdir -p $SLIDE_WORK_DIR
-
-    # Make sure the preprocessing data for this slice exists, if not issue a warning
-    if [[ ! -f $SLIDE_RGB ]]; then
-      echo "WARNING: missing images for $svs"
-      continue
-    fi
-
-    # Generate a mask from the RGB (only for NISSL slices). However, we skip this step
-    # if a mask already exists and is newer than the slide RGB
-    if [[ -f $SLIDE_MASK_GLOBAL_RFTRAIN && $SLIDE_RGB -nt $SLIDE_MASK ]]; then
-
-      # New command to generate a mask and also clear up streaks that are right
-      # along the mask border
-      c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
-          -pick 0 -thresh 0.5 inf 1 0 -as X \
-          -scale 0 -shift 1 -pad 32x32 32x32 0 -info -dilate 0 40x40 \
-          -insert X 1 -reslice-identity -push X -times \
-          -dilate 1 40x40 -info -push X -info -times \
-          -type short -o $SLIDE_MASK
-
-      # OLD CODE
-      #if [[ stain == "NISSL" ]]; then
-      #  c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
-      #    -pick 0 -thresh 0.5 inf 1 0 -o $SLIDE_MASK
-      #else
-      #  # On IHC, it is pretty hard to get rid of the slide border, but this additional
-      #  # processing should help clean up the mask
-      #  c2d -mcs $SLIDE_RGB -rf-apply $SLIDE_MASK_GLOBAL_RFTRAIN \
-      #    -pick 0 -thresh 0.5 inf 1 0 -dilate 0 9x9 -dilate 1 9x9 -o $SLIDE_MASK
-      #fi
-
-    fi
-
-<<'DISABLE_DECONV'
-    # Generate the stain-specific RGB images for non-NISSL stains via color deconvolution
-    if [[ $SLIDE_RGB -nt $SLIDE_HEM_SCALAR ||  $SLIDE_RGB -nt $SLIDE_DAB_SCALAR ]]; then
-
-      # Generate the hematoxylin and DAB maps
-      # TODO: the RGB are probably useless
-      c2d -mcs $SLIDE_RGB \
-        -foreach -stretch 0 98% 0 1 -clip 0 1 -log10 -scale -1 -endfor \
-        -popas ODB -popas ODG -popas ODR \
-        -push ODR -push ODG -push ODB \
-        -wsum 1.88 -0.07 -0.60 -o $SLIDE_HEM_SCALAR -popas C_HEM \
-        -push C_HEM -scale 0.65 -push C_HEM -scale 0.70 -push C_HEM -scale 0.29 \
-        -foreach -scale -1 -exp -endfor \
-        -omc $SLIDE_HEM_RGB \
-        -clear -push ODR -push ODG -push ODB \
-        -wsum -0.55 -0.13 1.57 -o $SLIDE_DAB_SCALAR -popas C_DAB \
-        -push C_DAB -scale 0.27 -push C_DAB -scale 0.57 -push C_DAB -scale 0.78 \
-        -foreach -scale -1 -exp -endfor \
-        -omc $SLIDE_DAB_RGB
-
-    fi
-DISABLE_DECONV
+    preproc_histology_slide $svs
 
   done < $HISTO_MATCH_MANIFEST
 }
@@ -3940,6 +3958,14 @@ function match_ihc_to_nissl_slice_internal()
 
   # Set the slide variables
   set_ihc_slice_vars $id $block $svs $stain $section $slice
+
+  # Generate the IHC slide mask if it is missing or older than the RGB, so
+  # that a separate preproc_histology_all step is not needed for new slides
+  preproc_histology_slide $svs
+  if [[ ! -f $SLIDE_MASK ]]; then
+    echo "ERROR: no mask for IHC slide $svs; check $SLIDE_RGB and $SLIDE_MASK_GLOBAL_RFTRAIN"
+    return
+  fi
 
   # Create the registration directory for this
   mkdir -p $SLIDE_IHC_TO_NISSL_REGDIR
@@ -5701,7 +5727,7 @@ function usage()
   echo "  recon_blockface_dc_all <regex>                  : Reconstruct blockface in 3D"
   echo "  match_blockface_to_mri_initial_all <regex>      : Rough blockface/MRI matching"
   echo "  register_bfdc_to_mri_all <regex>                : Careful blockface/MRI matching"
-  echo "  preproc_histology_all <regex>                   : Nissl masking"
+  echo "  preproc_histology_all <regex>                   : Slide masking (optional)"
   echo "  recon_histo_all <regex>                         : Nissl to MRI registration"
   echo "  match_ihc_to_nissl_all <stain> <regex>          : IHC to Nissl registration"
   echo "  splat_density_all <stain> <model> <con> <regex> : Splat density maps in block-MRI space (stain/model/con are regexes; 'all' means '.*')"
