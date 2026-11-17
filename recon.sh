@@ -4491,8 +4491,8 @@ function splat_density()
   # Create output directory
   mkdir -p $IHC_TO_NISSL_DIR
 
-  # Clear the splat manifest file
-  rm -f $IHC_DENSITY_SPLAT_MANIFEST
+  # Clear the splat manifest files (both are appended to below)
+  rm -f $IHC_DENSITY_SPLAT_MANIFEST $IHC_DENSITY_MASK_SPLAT_MANIFEST
 
   # Create output directory
   HISTO_DENSITY_DIR=$TMPDIR/ihc_maps/${id}_${block}
