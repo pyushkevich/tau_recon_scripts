@@ -304,6 +304,85 @@ function set_specimen_density_vars()
   set +vx; eval $tracestate
 }
 
+function set_specimen_sadhana_atlas_vars()
+{
+  # Don't trace inside of set functions
+  local tracestate=$(shopt -po xtrace); set +x
+
+  # Read parameters
+  local id args
+  read -r id args <<< "$@"
+
+  # Translate the ID into the Sadhana atlas ID. This requires looking up the 
+  # directories in Sadhana's atlas. 
+  SA_ROOT=/project/hippogang_2/pauly/aaic2024
+  SA_MANIFEST=$SA_ROOT/scripts/subj_all_volproc_2025.txt
+
+  # If id starts with INDD, grep for the id in the manifest file (format INDD[0-9]{6}-[LR] or INDD[0-9]{6}.[0-9]{2}-[LR]
+  # If id starts with HNL (HNL-34-18), remove the first dash, grep for that in the manifest file
+  if [[ $id =~ ^INDD.* ]]; then
+    SA_ID=$(grep -E "^${id}" $SA_MANIFEST | awk '{print $1}')
+  elif [[ $id =~ ^HNL.* ]]; then
+    local PAT=${id/HNL-/HNL}
+    PAT=${PAT/-/_}
+    SA_ID=$(grep -E "^${PAT}" $SA_MANIFEST | awk '{print $1}')
+  fi 
+
+  # Check that we found a match
+  if [[ -z $SA_ID ]]; then
+    echo "Error: Could not find Sadhana atlas ID for specimen $id"
+    exit 1
+  fi
+
+  # The location of the template image - used as reference space
+  SA_TEMPLATE_IMG=$SA_ROOT/current_template/template_img.nii.gz
+
+  # Affine transformation from raw to axis aligned space
+  SA_AFFINE_RAW_TO_AXISALIGN=$SA_ROOT/work/preproc/${SA_ID}/${SA_ID}_transform_to_axisalign.mat
+  SA_UNWARP_MAT=$SA_ROOT/work/preproc/${SA_ID}/unwarp/${SA_ID}_unwarp.mat
+  SA_WARPCHAIN_UNWARPED_TO_TEMPLATE=$SA_ROOT/work/warp_to_template/${SA_ID}/chain_unwarped_to_template.txt
+
+  # Define outputs - where the density maps and masked will be placed
+  SA_WORKDIR=$ROOT/work/$id/recon_template/sadhana_mtl
+
+  # The warp chain from the raw image space (HIRES_MRI) to the Sadhana template space
+  SA_WARPCHAIN_RAW_TO_TEMPLATE=${SA_WORKDIR}/${id}_warpchain_raw_to_template.txt
+
+  # Warped MRI image
+  SA_TEMPLATE_HIRES_MRI=$SA_WORKDIR/${id}_template_mri_hires.nii.gz
+
+  # Restore trace state
+  set +vx; eval $tracestate
+}
+
+function set_specimen_sadhana_atlas_density_vars()
+{
+  # Don't trace inside of set functions
+  local tracestate=$(shopt -po xtrace); set +x
+
+  # Read the parameters
+  local id stain model contrast mode args
+  read -r id stain model contrast mode args <<< "$@"
+
+  # Suffix for stain/model/contrast combo
+  local SUFFIX
+  if [[ $contrast == "main" ]]; then
+    SUFFIX="${stain}_${model}"
+  else
+    SUFFIX="${stain}_${model}_${contrast}"
+  fi
+
+  # Maps in template space
+  SA_TEMPLATE_DENSITY_SPLAT_TIMES_MASK=${SA_WORKDIR}/${id}_template_density_times_softmask_${SUFFIX}.nii.gz
+  SA_TEMPLATE_DENSITY_MASK_SPLAT=${SA_WORKDIR}/${id}_template_ihc_soft_mask_${stain}.nii.gz
+
+  # The workspace with that
+  SA_TEMPLATE_DENSITY_SPLAT_WORKSPACE=${SA_WORKDIR}/${id}_density_${SUFFIX}_tempspace.itksnap
+
+  # Restore trace state
+  set +vx; eval $tracestate
+}
+
 # Set common variables for a block
 function set_block_vars()
 {
@@ -1948,6 +2027,7 @@ function match_blockface_to_mri_initial
 
   # Get the flip parameter
   FLIP=$(awk -v id=$id '$1==id {print $4}' $MDIR/moldmri_src.txt)
+  CORRTYPE=$(awk -v id=$id '$1==id {print $5}' $MDIR/moldmri_src.txt)
 
   # Combine the block-level CSVs into one
   local BFSTAT="$TMPDIR/${id}_bfstat_all.csv"
@@ -1961,7 +2041,7 @@ function match_blockface_to_mri_initial
   Rscript "$ROOT/scripts/blockface_z_match.R" \
     -M "$MOLD_MRI_MASK_MOLDSPC_SLICE_STATS" -B "$BFSTAT" \
     -o "$TMPDIR/zmat_%s.mat" -P "$SPECIMEN_QCDIR/${id}_mri_blockface_zmatch_plot_%02d.pdf" \
-    -f $FLIP
+    -f $FLIP -c $CORRTYPE
 
   # Run 2D registration to generate the 2D matrices
   for block in $blocks; do
@@ -5054,6 +5134,80 @@ function block_final_qc()
   done
 
 }
+
+function map_specimen_to_mtl_template()
+{
+  local id args dummy
+  read -r id args <<< "$@"
+  set_specimen_vars $id
+  set_specimen_sadhana_atlas_vars $id
+
+  # Write the warps into a chain file for later use, the warp chains in Sadhana's atlas
+  # are from atlas aligned space, but here they are from the raw MRI space, so we add the
+  # raw to axis align to the chain
+  mkdir -p $SA_WORKDIR
+  # local WARPCHAIN="$(cat $SA_WARPCHAIN_UNWARPED_TO_TEMPLATE) $SA_UNWARP_MAT $SA_AFFINE_RAW_TO_AXISALIGN"
+  local WARPCHAIN="$(cat $SA_WARPCHAIN_UNWARPED_TO_TEMPLATE) $SA_UNWARP_MAT"
+  echo $WARPCHAIN > $SA_WARPCHAIN_RAW_TO_TEMPLATE
+
+  # Map the high-res MRI to the template space
+  greedy -d 3 -threads 1 \
+    -rf $SA_TEMPLATE_IMG \
+    -rm $HIRES_MRI $SA_TEMPLATE_HIRES_MRI \
+    -r $WARPCHAIN
+
+  # Loop over stain, model and contrast
+  for stain in $(density_param "keys[]"); do
+    set_specimen_stain_vars $id $stain raw
+    for model in $(density_param ".${stain}.models | keys[]"); do
+      for contrast in $(density_param ".${stain}.models.${model}.contrasts | keys[]"); do
+        set_specimen_density_vars $id $stain $model $contrast $mode
+        set_specimen_sadhana_atlas_density_vars $id $stain $model $contrast raw
+
+        if [[ -f $SPECIMEN_DENSITY_SPLAT_TIMES_MASK_VIS ]]; then
+          echo "Mapping $stain $model $contrast to template space"
+
+          # Map the density to the template space
+          greedy -d 3 -threads 1 \
+            -rf $SA_TEMPLATE_IMG \
+            -rm $SPECIMEN_DENSITY_SPLAT_TIMES_MASK_VIS $SA_TEMPLATE_DENSITY_SPLAT_TIMES_MASK \
+            -rm $SPECIMEN_IHC_SOFTMASK_SPLAT_VIS $SA_TEMPLATE_DENSITY_MASK_SPLAT \
+            -r $WARPCHAIN
+
+          # Create a merged workspace for visualization
+          itksnap-wt \
+            -laa "$SA_TEMPLATE_HIRES_MRI" -psn "Hires MRI" \
+            -laa "$SA_TEMPLATE_DENSITY_SPLAT_TIMES_MASK" \
+            -prl LayerMetaData.DisplayMapping "$ROOT/scripts/itksnap/dispmap_${stain}_${model}.txt" \
+            -psn "${stain} ${model}" \
+            -prs LayerMetaData.Sticky 1 \
+            -laa "$SA_TEMPLATE_DENSITY_MASK_SPLAT" -psn "Recon mask" \
+            -o $SA_TEMPLATE_DENSITY_SPLAT_WORKSPACE
+        fi
+      done
+    done
+  done
+}
+
+function map_specimen_to_mtl_template_all()
+{
+  # Read required and optional parameters
+  local REGEXP
+  read -r REGEXP args <<< "$@"
+
+  # Process the individual blocks
+  while read -r id blocks; do
+    if [[ $id =~ $REGEXP ]]; then
+      # Submit the jobs
+      pybatch -N "map_specimen_to_mtl_template_${id}" -m 16G -n 1 \
+        "$0" -d map_specimen_to_mtl_template $id $MODE
+    fi
+  done < "$MDIR/blockface_src.txt"
+
+  # Wait for completion
+  pybatch -w "map_specimen_to_mtl_template_*" /bin/sleep 1
+}
+
 
 
 function block_final_qc_all()
