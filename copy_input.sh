@@ -67,7 +67,7 @@ function copy_mold_mri()
 {
   REGEXP=$1
 
-  while read -r ID SDIR args; do
+  while read -r ID SDIR args || [[ -n $ID ]]; do
 
     # Create the input directory
     if [[ $ID =~ $REGEXP ]]; then
@@ -93,7 +93,7 @@ function copy_hires_mri()
 {
   REGEXP=$1
 
-  while IFS=$',' read -r ID FWPATH args; do
+  while IFS=$',' read -r ID FWPATH args || [[ -n $ID ]]; do
     if [[ $ID =~ $REGEXP ]]; then
       echo "Trying to copy $ID high-res MRI from '$FWPATH'"
 
@@ -135,7 +135,7 @@ function copy_hires_mri()
 function setup_manual_mri_regs()
 {
   REGEXP=$1
-  while read -r ID args; do
+  while read -r ID args || [[ -n $ID ]]; do
     if [[ $ID =~ $REGEXP ]]; then
 
       # Set up the directories
