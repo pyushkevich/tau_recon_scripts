@@ -100,18 +100,18 @@ for (row in seq_len(nrow(M))) {
    t.bg <- matrix(t.mat[r.bg,],,1);
    
    # Get foreground/background samples
-   if(sum(r.fg) > 0 && sum(r.bg) > 0) {
+   if(sum(r.fg) > sfg && sum(r.bg) > sbg) {
       sam.fg <- sample.int(sum(r.fg), sfg);
       sam.bg <- sample.int(sum(r.bg), sbg);
       f.sam <- rbind(f.fg[sam.fg,], f.bg[sam.bg,]);
       t.sam <- rbind(matrix(t.fg[sam.fg,],,1), matrix(t.bg[sam.bg,],,1));
    }
-   else if(sum(r.fg) > 0) {
+   else if(sum(r.fg) > sfg) {
       sam.fg <- sample.int(sum(r.fg), sfg);
       f.sam <- f.fg[sam.fg,];
       t.sam <- matrix(t.fg[sam.fg,],,1);
    }
-   else if(sum(r.bg) > 0) {
+   else if(sum(r.bg) > sbg) {
       sam.bg <- sample.int(sum(r.bg), sbg);
       f.sam <- f.bg[sam.bg,];
       t.sam <- matrix(t.bg[sam.bg,],,1);
